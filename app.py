@@ -1,7 +1,8 @@
 """
 OpenBIM (IFC) Automated BOQ & Cost Variance Intelligence Engine.
 Streamlit Cockpit Application for BIM Quantity Takeoff, CPWD Schedule of Rates,
-and AI-Powered Structural Cost Variance Diagnostics.
+AI-Powered Structural Cost Variance Diagnostics, Explainable AI (SHAP),
+and Semi-Supervised Model Benchmarking.
 """
 
 import os
@@ -17,6 +18,10 @@ from core.sample_generator import generate_lt_sample_ifc
 from core.boq_calculator import BOQEngine
 from core.anomaly_detector import BIMAnomalyDetector
 from core.excel_exporter import BOQExcelExporter
+from core.interpretability import AnomalyExplainer
+from core.stratified_residuals import StratifiedResidualScorer
+from core.benchmarking import AnomalyBenchmarkLab
+from core.semantic_matcher import SemanticSORMatcher
 from config.rates import (
     DEFAULT_CONCRETE_RATES,
     STEEL_RATES,
@@ -191,7 +196,6 @@ with st.sidebar:
             help="Supports standard IFC2X3 and IFC4 exported from Autodesk Revit, Tekla Structures, or ArchiCAD.",
         )
         if uploaded_file is not None:
-            # Save uploaded bytes to a persistent temp path in sample_models
             temp_dir = Path("sample_models")
             temp_dir.mkdir(parents=True, exist_ok=True)
             saved_temp_path = str(temp_dir / f"uploaded_{uploaded_file.name}")
@@ -234,7 +238,7 @@ with st.sidebar:
     iso_contamination = st.slider(
         "Isolation Forest Sensitivity:",
         min_value=0.01,
-        max_value=0.12,
+        max_value=0.15,
         value=0.05,
         step=0.01,
         help="Expected proportion of structural geometry and rate outliers."
@@ -263,10 +267,11 @@ df_enriched = boq_engine.compute_element_takeoffs(df_raw)
 df_boq = boq_engine.generate_abstract_boq(df_enriched)
 kpis = boq_engine.get_kpi_summary(df_enriched)
 
-# Run Anomaly Detection
+# Run Anomaly Detection (with Stratified Residual Scoring)
 detector = BIMAnomalyDetector(contamination=iso_contamination, z_score_threshold=z_score_thresh)
 df_audited = detector.detect_anomalies(df_enriched)
 audit_summary = detector.get_audit_summary(df_audited)
+explainer = detector.get_explainer()
 
 
 # -----------------------------------------------------------------------------
@@ -355,12 +360,13 @@ st.markdown("<br>", unsafe_allow_html=True)
 # -----------------------------------------------------------------------------
 # 7. Cockpit Tabs
 # -----------------------------------------------------------------------------
-tab_3d, tab_boq, tab_anomaly, tab_analytics, tab_rates, tab_export = st.tabs([
+tab_3d, tab_boq, tab_anomaly, tab_analytics, tab_benchmark, tab_rates, tab_export = st.tabs([
     "🏗️ 3D Model & Takeoff Explorer",
     "📋 Automated Bill of Quantities (BOQ)",
     "🔍 AI Anomaly & Variance Audit",
     "📊 Cost Analytics & Breakdown",
-    "💰 Schedule of Rates (SOR)",
+    "🧪 R&D Benchmark & Calibration Lab",
+    "💰 Schedule of Rates & Semantic Matcher",
     "📥 Export Center",
 ])
 
@@ -405,8 +411,8 @@ with tab_3d:
     )
     st.plotly_chart(fig_3d, use_container_width=True)
 
-    # Element Inspector Expander
-    with st.expander("🔍 Interactive Element Inspector (Deep Dive by Tag / ID)", expanded=False):
+    # Element Inspector Expander with TreeSHAP and Stratified Residuals
+    with st.expander("🔍 Interactive Element Inspector & Explainable AI (SHAP)", expanded=False):
         selected_element_tag = st.selectbox(
             "Select Element to Inspect:",
             df_audited["tag"] + " | " + df_audited["name"],
@@ -427,9 +433,26 @@ with tab_3d:
         ci7.metric("Formwork Area", f"{el_row['formwork_sqm']:.2f} m²")
         ci8.metric("Total Element Cost", f"₹{el_row['total_cost_inr']:,.2f}")
 
+        # Stratified Physical Residual Cards
+        st.markdown("##### Stratified Physical Model Residuals (Conditioned by Member Class)")
+        cr_col1, cr_col2, cr_col3, cr_col4 = st.columns(4)
+        cr_col1.metric("Expected Formwork", f"{el_row.get('formwork_expected_sqm', 0):.2f} m²")
+        cr_col2.metric("Formwork Residual Z", f"{el_row.get('formwork_studentized_residual', 0):+.2f} σ")
+        cr_col3.metric("Expected Steel", f"{el_row.get('rebar_expected_kg', 0):.1f} kg")
+        cr_col4.metric("Steel Residual Z", f"{el_row.get('rebar_studentized_residual', 0):+.2f} σ")
+
         if el_row["risk_level"] in ["HIGH", "MEDIUM"]:
             st.error(f"**Anomaly Audit Flag ({el_row['risk_level']}):** {el_row['anomaly_reasons']}")
-            st.info(f"**Recommended Quantity Surveyor Action:** {el_row['recommended_action']}")
+            st.info(f"**Recommended Action:** {el_row['recommended_action']}")
+
+        # TreeSHAP Waterfall Chart
+        if explainer is not None:
+            st.markdown("##### TreeSHAP Local Feature Attribution")
+            x_inst = el_row[detector.ml_feature_names].fillna(0.0).values
+            x_inst_scaled = detector.scaler.transform(x_inst.reshape(1, -1))
+            inst_explanation = explainer.explain_instance(x_inst_scaled)
+            fig_waterfall = explainer.generate_waterfall_chart(el_row["name"], inst_explanation)
+            st.plotly_chart(fig_waterfall, use_container_width=True)
 
 
 # =============================================================================
@@ -481,7 +504,7 @@ with tab_boq:
 # =============================================================================
 with tab_anomaly:
     st.subheader("AI Anomaly & Cost Dispute Diagnostic Center")
-    st.caption("Unsupervised Machine Learning (Isolation Forest) and Cohort Z-Score analysis identifying volumetric anomalies, corrupted Qto property sets, and contractor billing risks.")
+    st.caption("Unsupervised Machine Learning (Isolation Forest), Stratified Physical Residuals, and Cohort Z-Score analysis identifying volumetric anomalies, corrupted Qto property sets, and contractor billing risks.")
 
     ca1, ca2, ca3 = st.columns(3)
     with ca1:
@@ -527,19 +550,22 @@ with tab_anomaly:
     else:
         audit_cols = [
             "name", "ifc_type", "storey", "concrete_vol_cum", "cohort_mean_vol",
-            "z_score_vol", "total_cost_inr", "risk_level", "anomaly_reasons", "recommended_action"
+            "z_score_vol", "formwork_studentized_residual", "rebar_studentized_residual",
+            "total_cost_inr", "risk_level", "anomaly_reasons", "recommended_action"
         ]
         df_show = df_audit_display[audit_cols].rename(columns={
             "name": "Element Tag / Name",
             "ifc_type": "Class",
             "storey": "Storey",
             "concrete_vol_cum": "Vol (m³)",
-            "cohort_mean_vol": "Cohort Mean (m³)",
-            "z_score_vol": "Z-Score",
-            "total_cost_inr": "Total Cost (₹)",
+            "cohort_mean_vol": "Peer Mean",
+            "z_score_vol": "Cohort Z",
+            "formwork_studentized_residual": "FW Res (σ)",
+            "rebar_studentized_residual": "Rebar Res (σ)",
+            "total_cost_inr": "Cost (₹)",
             "risk_level": "Risk",
             "anomaly_reasons": "AI Diagnosis",
-            "recommended_action": "Recommended Action",
+            "recommended_action": "Action",
         })
 
         st.dataframe(
@@ -554,6 +580,13 @@ with tab_anomaly:
             use_container_width=True,
             hide_index=True,
         )
+
+    # Global SHAP Feature Importance Expander
+    if explainer is not None and detector.X_train_scaled is not None:
+        with st.expander("📈 Global SHAP Feature Importance Across BIM Model", expanded=False):
+            st.caption("Mean absolute SHAP impact of each dimensional feature on anomaly scores.")
+            df_imp = explainer.compute_global_feature_importance(detector.X_train_scaled)
+            st.dataframe(df_imp, hide_index=True, use_container_width=True)
 
 
 # =============================================================================
@@ -573,7 +606,6 @@ with tab_analytics:
     with c_g3:
         st.plotly_chart(build_concrete_grade_breakdown(df_audited), use_container_width=True)
     with c_g4:
-        # Storey cost breakdown
         storey_grp = df_audited.groupby("storey").agg(
             cost_lakhs=("total_cost_inr", lambda x: round(x.sum() / 100000.0, 2)),
             concrete_m3=("concrete_vol_cum", "sum")
@@ -583,12 +615,100 @@ with tab_analytics:
 
 
 # =============================================================================
-# TAB 5: SCHEDULE OF RATES (SOR)
+# TAB 5: R&D BENCHMARK & CALIBRATION LAB (NEW EVALUATION FRAMEWORK)
+# =============================================================================
+with tab_benchmark:
+    st.subheader("🧪 Semi-Supervised Benchmark & Threshold Calibration Lab")
+    st.caption("Methodology for evaluating unsupervised anomaly models without ground truth: injects controlled BIM corruption topologies (unit shifts, dimension typos, rebar surges) to evaluate and calibrate decision thresholds.")
+
+    b_col1, b_col2 = st.columns([1.5, 3.5])
+    with b_col1:
+        st.markdown("#### Calibration Settings")
+        bench_corruption_rate = st.slider("Synthetic Corruption Rate (%):", min_value=4, max_value=20, value=8, step=1)
+        run_bench_btn = st.button("🚀 Run Multi-Model Benchmark", use_container_width=True)
+
+    # Cache or execute benchmark
+    if "bench_results" not in st.session_state or run_bench_btn:
+        with st.spinner("Generating synthetic corruption benchmark and training multi-model suite..."):
+            lab = AnomalyBenchmarkLab(random_state=42)
+            df_bench, y_true = lab.generate_synthetic_benchmark(df_enriched, corruption_rate=bench_corruption_rate / 100.0)
+            bench_results = lab.run_multi_model_benchmark(df_bench, y_true)
+            fig_roc, fig_pr = lab.build_roc_pr_comparison_charts(bench_results)
+            st.session_state["bench_results"] = bench_results
+            st.session_state["fig_roc"] = fig_roc
+            st.session_state["fig_pr"] = fig_pr
+            st.session_state["y_true"] = y_true
+
+    with b_col2:
+        # Display Comparison Table
+        b_res = st.session_state["bench_results"]
+        summary_rows = []
+        for model_name, m_data in b_res.items():
+            summary_rows.append({
+                "Algorithm Paradigm": model_name,
+                "ROC-AUC (Area Under ROC)": m_data["roc_auc"],
+                "PR-AUC (Avg Precision)": m_data["pr_auc"],
+                "Calibrated Optimal F1": m_data["best_f1"],
+                "Optimal Decision Threshold (τ*)": m_data["optimal_threshold"],
+            })
+        st.markdown("#### Benchmark Performance Comparison")
+        st.dataframe(pd.DataFrame(summary_rows), hide_index=True, use_container_width=True)
+
+    # Render ROC and PR charts
+    rc1, rc2 = st.columns(2)
+    with rc1:
+        st.plotly_chart(st.session_state["fig_roc"], use_container_width=True)
+    with rc2:
+        st.plotly_chart(st.session_state["fig_pr"], use_container_width=True)
+
+    st.info("💡 **Methodology Insight:** Isolation Forest delivers high ROC-AUC and Average Precision on non-linear volumetric spikes, while the class-conditioned Stratified Residual Scorer provides physical explainability. The mathematically optimal decision threshold τ* maximizes F1 score rather than relying on arbitrary 2.5σ heuristics.")
+
+
+# =============================================================================
+# TAB 6: SCHEDULE OF RATES & SEMANTIC MATCHER (NEW NLP / VECTOR SEARCH)
 # =============================================================================
 with tab_rates:
-    st.subheader("Schedule of Rates (SOR) & Structural Norms Card")
-    st.caption("CPWD Delhi Schedule of Rates (DSR 2023) baseline parameters with active project multipliers.")
+    st.subheader("Schedule of Rates (SOR) & Semantic Vector Matcher")
+    st.caption("CPWD Delhi Schedule of Rates (DSR 2023) baseline parameters coupled with vector space cosine similarity to match raw BIM strings to official DSR line items.")
 
+    # Semantic Rate Matcher Expander
+    with st.expander("🔎 Semantic Rate Search (Vector Cosine Similarity over CPWD DSR)", expanded=True):
+        st.caption("Type any raw specification, material tag, or contractor billing description to find the closest official CPWD item codes with confidence scoring.")
+        
+        sample_queries = [
+            "RCC M35 Design Mix high strength pumping concrete for transfer girders",
+            "Thermo-Mechanically Treated Fe-500D high ductility reinforcement bars",
+            "Centering and shuttering for suspended floor slabs and balcony decking",
+            "M20 nominal mix cement concrete for foundation mass concrete",
+        ]
+        chosen_preset = st.selectbox("Quick-fill sample specification query:", ["-- Type custom query --"] + sample_queries)
+        default_query = sample_queries[0] if chosen_preset == "-- Type custom query --" else chosen_preset
+        
+        query_text = st.text_input("Structural Specification String:", value=default_query)
+        
+        if query_text:
+            matcher = SemanticSORMatcher()
+            matches = matcher.match_specification(query_text, top_k=3)
+            
+            sm_cols = st.columns(3)
+            for idx, match in enumerate(matches):
+                with sm_cols[idx]:
+                    tier_color = "#10B981" if match["similarity_score"] > 0.50 else ("#F59E0B" if match["similarity_score"] > 0.30 else "#64748B")
+                    st.markdown(f"""
+                    <div style="background:#FFFFFF; border:1px solid #E2E8F0; border-top:4px solid {tier_color}; border-radius:8px; padding:12px; box-shadow:0 2px 4px rgba(0,0,0,0.04);">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-weight:700; color:#1E3E62;">Rank #{idx+1}</span>
+                            <span style="background:{tier_color}; color:white; padding:2px 7px; border-radius:10px; font-size:0.75rem; font-weight:700;">
+                                {match['confidence_pct']}% Match
+                            </span>
+                        </div>
+                        <h4 style="margin:8px 0 4px 0; font-size:1.0rem;">{match['item_code']}</h4>
+                        <p style="font-size:0.8rem; color:#475569; margin-bottom:8px;">{match['specification']}</p>
+                        <div style="font-size:0.85rem; font-weight:600; color:#0F172A;">Base Rate: ₹{match['base_rate_inr']:,.2f} / {match['unit']}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
     cr1, cr2 = st.columns(2)
     
     with cr1:
@@ -627,17 +747,9 @@ with tab_rates:
             })
         st.dataframe(pd.DataFrame(formwork_table), hide_index=True, use_container_width=True)
 
-    st.markdown("#### SP-34 Reinforcement Detailing Thumb Rules")
-    thumb_cols = st.columns(len(REBAR_DENSITY_THUMB_RULES) - 1)
-    for idx, (k, val) in enumerate(REBAR_DENSITY_THUMB_RULES.items()):
-        if k == "DEFAULT":
-            continue
-        with thumb_cols[idx]:
-            st.metric(k.replace("Ifc", ""), f"{val:.0f} kg/m³")
-
 
 # =============================================================================
-# TAB 6: EXPORT CENTER
+# TAB 7: EXPORT CENTER
 # =============================================================================
 with tab_export:
     st.subheader("Professional Export Center")

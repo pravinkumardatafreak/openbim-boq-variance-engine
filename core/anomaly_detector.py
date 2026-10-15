@@ -50,7 +50,14 @@ class BIMAnomalyDetector:
         df["is_zscore_anomaly"] = (df["z_score_vol"].abs() >= self.z_score_threshold) & (df["cohort_std_vol"] > 1e-4)
 
         # ---------------------------------------------------------
-        # 2. Machine Learning: Scikit-Learn Isolation Forest
+        # 2. Multi-Class Stratified Physical Residual Scoring
+        # ---------------------------------------------------------
+        from core.stratified_residuals import StratifiedResidualScorer
+        self.residual_scorer = StratifiedResidualScorer()
+        df = self.residual_scorer.fit_and_score(df)
+
+        # ---------------------------------------------------------
+        # 3. Machine Learning: Scikit-Learn Isolation Forest
         # ---------------------------------------------------------
         feature_cols = ["concrete_vol_cum", "total_cost_inr", "formwork_sqm", "rebar_kg"]
         
@@ -59,6 +66,7 @@ class BIMAnomalyDetector:
         df["cost_vol_ratio"] = np.where(df["concrete_vol_cum"] > 1e-4, df["total_cost_inr"] / df["concrete_vol_cum"], 0.0)
 
         ml_features = ["concrete_vol_cum", "total_cost_inr", "formwork_vol_ratio", "cost_vol_ratio"]
+        self.ml_feature_names = ml_features
         
         if len(df) >= 10:
             X = df[ml_features].fillna(0.0).values
@@ -73,10 +81,14 @@ class BIMAnomalyDetector:
             df["iforest_prediction"] = iso_forest.fit_predict(X_scaled)  # -1 for anomaly, 1 for normal
             df["iforest_score"] = iso_forest.decision_function(X_scaled).round(4)
             df["is_ml_anomaly"] = df["iforest_prediction"] == -1
+            self.fitted_model = iso_forest
+            self.X_train_scaled = X_scaled
         else:
             df["iforest_prediction"] = 1
             df["iforest_score"] = 0.0
             df["is_ml_anomaly"] = False
+            self.fitted_model = None
+            self.X_train_scaled = None
 
         # ---------------------------------------------------------
         # 3. Engineering QA & Contract Compliance Rules
@@ -127,6 +139,12 @@ class BIMAnomalyDetector:
                 reasons.append("Missing standard BaseQuantities Qto set. Fallback to bounding box geometry.")
                 risk = "MEDIUM" if risk == "NORMAL" else risk
 
+            if row.get("is_stratified_outlier", False):
+                fw_res = row.get("formwork_studentized_residual", 0)
+                rb_res = row.get("rebar_studentized_residual", 0)
+                reasons.append(f"Stratified physical regression departure (Formwork Res: {fw_res:+.1f}σ, Rebar Res: {rb_res:+.1f}σ).")
+                risk = "HIGH" if (abs(fw_res) >= 3.0 or abs(rb_res) >= 3.0) else ("MEDIUM" if risk == "NORMAL" else risk)
+
             # Recommended action for QS
             if risk == "HIGH":
                 action = "FLAGGED FOR BIM AUDIT: Verify model dimensions with structural engineer before contractor billing."
@@ -153,6 +171,13 @@ class BIMAnomalyDetector:
         df["is_any_anomaly"] = df["risk_level"].isin(["HIGH", "MEDIUM"])
 
         return df
+
+    def get_explainer(self):
+        """Returns AnomalyExplainer instance for SHAP interpretability if model is fitted."""
+        if self.fitted_model is not None and self.X_train_scaled is not None:
+            from core.interpretability import AnomalyExplainer
+            return AnomalyExplainer(self.fitted_model, self.ml_feature_names, self.X_train_scaled)
+        return None
 
     def get_audit_summary(self, df_audited: pd.DataFrame) -> Dict[str, Any]:
         """
