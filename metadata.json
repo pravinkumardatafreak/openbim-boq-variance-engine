@@ -1,0 +1,7 @@
+{
+  "name": "OpenBIM BOQ & Cost Intelligence Engine",
+  "description": "Automated OpenBIM IFC parser, CPWD DSR Bill of Quantities generator, AI structural cost anomaly detector, TreeSHAP explainability, and Google Gemini copilot.",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
