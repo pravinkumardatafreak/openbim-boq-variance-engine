@@ -1,4 +1,4 @@
-"""Core engine modules for OpenBIM BOQ, Anomaly Detection, XAI, and Benchmarking."""
+"""Core engine modules for OpenBIM BOQ, Anomaly Detection, XAI, Benchmarking, and GenAI Copilot."""
 from .ifc_parser import IFCModelParser
 from .sample_generator import generate_lt_sample_ifc
 from .boq_calculator import BOQEngine
@@ -8,6 +8,7 @@ from .interpretability import AnomalyExplainer
 from .stratified_residuals import StratifiedResidualScorer
 from .benchmarking import AnomalyBenchmarkLab
 from .semantic_matcher import SemanticSORMatcher
+from .genai_copilot import BIMGenAICopilot
 
 __all__ = [
     "IFCModelParser",
@@ -19,4 +20,5 @@ __all__ = [
     "StratifiedResidualScorer",
     "AnomalyBenchmarkLab",
     "SemanticSORMatcher",
+    "BIMGenAICopilot",
 ]

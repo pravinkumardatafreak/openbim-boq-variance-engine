@@ -2,7 +2,7 @@
 OpenBIM (IFC) Automated BOQ & Cost Variance Intelligence Engine.
 Streamlit Cockpit Application for BIM Quantity Takeoff, CPWD Schedule of Rates,
 AI-Powered Structural Cost Variance Diagnostics, Explainable AI (SHAP),
-and Semi-Supervised Model Benchmarking.
+Semi-Supervised Model Benchmarking, and Google Gemini GenAI Copilot.
 """
 
 import os
@@ -22,6 +22,7 @@ from core.interpretability import AnomalyExplainer
 from core.stratified_residuals import StratifiedResidualScorer
 from core.benchmarking import AnomalyBenchmarkLab
 from core.semantic_matcher import SemanticSORMatcher
+from core.genai_copilot import BIMGenAICopilot
 from config.rates import (
     DEFAULT_CONCRETE_RATES,
     STEEL_RATES,
@@ -121,32 +122,6 @@ st.markdown("""
         color: #475569;
         margin-top: 2px;
     }
-
-    /* Badges */
-    .badge-high {
-        background-color: #EF4444;
-        color: white;
-        padding: 3px 8px;
-        border-radius: 4px;
-        font-size: 0.75rem;
-        font-weight: bold;
-    }
-    .badge-med {
-        background-color: #F59E0B;
-        color: white;
-        padding: 3px 8px;
-        border-radius: 4px;
-        font-size: 0.75rem;
-        font-weight: bold;
-    }
-    .badge-normal {
-        background-color: #10B981;
-        color: white;
-        padding: 3px 8px;
-        border-radius: 4px;
-        font-size: 0.75rem;
-        font-weight: bold;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -243,6 +218,26 @@ with st.sidebar:
         step=0.01,
         help="Expected proportion of structural geometry and rate outliers."
     )
+
+    st.markdown("---")
+    st.subheader("4. 🤖 Gemini GenAI Copilot")
+    default_gemini_key = os.getenv("GEMINI_API_KEY", "")
+    if not default_gemini_key:
+        try:
+            default_gemini_key = st.secrets.get("GEMINI_API_KEY", "")
+        except Exception:
+            default_gemini_key = ""
+
+    gemini_key = st.text_input(
+        "Gemini API Key:",
+        type="password",
+        value=default_gemini_key,
+        help="Google Gemini API key for real-time executive structural audit memoranda and interactive conversational copilot. Can also be set via GEMINI_API_KEY environment variable.",
+    )
+    if gemini_key and gemini_key.strip():
+        st.success("🟢 Gemini GenAI Connected (Live Mode)")
+    else:
+        st.info("⚪ Calibrated Audit Mode (Add key for live generative streaming)")
 
 
 # -----------------------------------------------------------------------------
@@ -358,12 +353,13 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 
 # -----------------------------------------------------------------------------
-# 7. Cockpit Tabs
+# 7. Cockpit Tabs (8 Operational Modules)
 # -----------------------------------------------------------------------------
-tab_3d, tab_boq, tab_anomaly, tab_analytics, tab_benchmark, tab_rates, tab_export = st.tabs([
+tab_3d, tab_boq, tab_anomaly, tab_copilot, tab_analytics, tab_benchmark, tab_rates, tab_export = st.tabs([
     "🏗️ 3D Model & Takeoff Explorer",
     "📋 Automated Bill of Quantities (BOQ)",
     "🔍 AI Anomaly & Variance Audit",
+    "🤖 GenAI Audit Memo & Copilot",
     "📊 Cost Analytics & Breakdown",
     "🧪 R&D Benchmark & Calibration Lab",
     "💰 Schedule of Rates & Semantic Matcher",
@@ -590,7 +586,106 @@ with tab_anomaly:
 
 
 # =============================================================================
-# TAB 4: COST ANALYTICS & BREAKDOWN
+# TAB 4: GENAI STRUCTURAL COPILOT & AUDIT MEMO (NEW GOOGLE GEMINI MODULE)
+# =============================================================================
+with tab_copilot:
+    st.subheader("🤖 GenAI Structural Cost Copilot & Live Audit Memorandum")
+    st.caption("Powered by Google Gemini (gemini-2.5-flash). Generates executive commercial audit memos and provides interactive conversational Q&A grounded in BIM model takeoffs.")
+
+    copilot = BIMGenAICopilot(api_key=gemini_key)
+
+    if not copilot.is_configured():
+        st.info("ℹ️ **Gemini Live Mode Available:** Enter your Google Gemini API key in the sidebar to stream real-time context-adaptive memos and chat. Using calibrated engineering audit engine in demo mode.")
+
+    memo_col1, memo_col2 = st.columns([1, 1])
+
+    # Left Column: Executive Audit Memorandum
+    with memo_col1:
+        st.markdown("#### 📋 Executive Audit Memorandum")
+        st.write("Generates an authoritative technical memorandum reviewing volumetric exposure, value engineering, and subcontractor dispute mitigation.")
+        
+        gen_memo_btn = st.button("⚡ Generate Executive Audit Memo", use_container_width=True)
+        
+        if "audit_memo_text" not in st.session_state or gen_memo_btn:
+            with st.spinner("Analyzing BIM geometry, CPWD rate schedule, and TreeSHAP risk factors..."):
+                st.session_state["audit_memo_text"] = copilot.generate_executive_audit_memo(
+                    metadata=metadata,
+                    kpis=kpis,
+                    audit_summary=audit_summary,
+                    df_audited=df_audited,
+                )
+
+        st.markdown(
+            f"""<div style="background:#F8FAFC; border:1px solid #E2E8F0; border-radius:8px; padding:18px; max-height:550px; overflow-y:auto;">
+            {st.session_state["audit_memo_text"]}
+            </div>""",
+            unsafe_allow_html=True
+        )
+
+        st.download_button(
+            label="⬇️ Download Audit Memo (.md)",
+            data=st.session_state["audit_memo_text"],
+            file_name=f"Executive_Audit_Memo_{metadata.get('project_name', 'Project').replace(' ', '_')}.md",
+            mime="text/markdown",
+            use_container_width=True,
+        )
+
+    # Right Column: Interactive Chat with BIM Auditor
+    with memo_col2:
+        st.markdown("#### 💬 Ask the BIM Auditor (Conversational Q&A)")
+        st.caption("Ask specific clarification questions about member sizing, CPWD rates, mix grades, or dispute risks.")
+
+        if "copilot_chat_history" not in st.session_state:
+            st.session_state["copilot_chat_history"] = [
+                {"role": "assistant", "content": "Hello! I am your OpenBIM Structural Cost Copilot. Ask me any question about model quantities, CPWD DSR rate items, or flagged high-risk anomalies."}
+            ]
+
+        # Quick Suggestion Chips
+        st.write("**Quick Inquiries:**")
+        qc1, qc2 = st.columns(2)
+        q_clicked = None
+        if qc1.button("🔍 Explain Column C-GF-32"):
+            q_clicked = "Why is Column C-GF-32 flagged as a high-risk anomaly, and what is its financial impact?"
+        if qc2.button("🧪 Evaluate Concrete Mixes"):
+            q_clicked = "Evaluate the concrete mix grades across the building and suggest value engineering substitutions."
+        
+        qc3, qc4 = st.columns(2)
+        if qc3.button("🏗️ Review Rebar Ratio"):
+            q_clicked = "How does the reinforcement consumption density compare to standard IS/SP-34 norms?"
+        if qc4.button("📜 Check CPWD Item Codes"):
+            q_clicked = "Which CPWD DSR item codes apply to the foundation footings and suspended floor slabs?"
+
+        # Chat message display box
+        chat_container = st.container(height=340)
+        with chat_container:
+            for message in st.session_state["copilot_chat_history"]:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+
+        user_input = st.chat_input("Ask a question about the model, BOQ, or anomalies...")
+        prompt_to_send = q_clicked or user_input
+
+        if prompt_to_send:
+            st.session_state["copilot_chat_history"].append({"role": "user", "content": prompt_to_send})
+            with st.chat_message("user"):
+                st.markdown(prompt_to_send)
+
+            with st.chat_message("assistant"):
+                with st.spinner("Consulting OpenBIM knowledge base & CPWD DSR rate index..."):
+                    response_text = copilot.chat_with_auditor(
+                        user_message=prompt_to_send,
+                        chat_history=st.session_state["copilot_chat_history"][:-1],
+                        metadata=metadata,
+                        kpis=kpis,
+                        audit_summary=audit_summary,
+                        df_audited=df_audited,
+                    )
+                    st.markdown(response_text)
+                    st.session_state["copilot_chat_history"].append({"role": "assistant", "content": response_text})
+
+
+# =============================================================================
+# TAB 5: COST ANALYTICS & BREAKDOWN
 # =============================================================================
 with tab_analytics:
     st.subheader("Structural Cost Variance Analytics & Outlier Clustering")
@@ -615,7 +710,7 @@ with tab_analytics:
 
 
 # =============================================================================
-# TAB 5: R&D BENCHMARK & CALIBRATION LAB (NEW EVALUATION FRAMEWORK)
+# TAB 6: R&D BENCHMARK & CALIBRATION LAB
 # =============================================================================
 with tab_benchmark:
     st.subheader("🧪 Semi-Supervised Benchmark & Threshold Calibration Lab")
@@ -640,7 +735,6 @@ with tab_benchmark:
             st.session_state["y_true"] = y_true
 
     with b_col2:
-        # Display Comparison Table
         b_res = st.session_state["bench_results"]
         summary_rows = []
         for model_name, m_data in b_res.items():
@@ -654,7 +748,6 @@ with tab_benchmark:
         st.markdown("#### Benchmark Performance Comparison")
         st.dataframe(pd.DataFrame(summary_rows), hide_index=True, use_container_width=True)
 
-    # Render ROC and PR charts
     rc1, rc2 = st.columns(2)
     with rc1:
         st.plotly_chart(st.session_state["fig_roc"], use_container_width=True)
@@ -665,13 +758,12 @@ with tab_benchmark:
 
 
 # =============================================================================
-# TAB 6: SCHEDULE OF RATES & SEMANTIC MATCHER (NEW NLP / VECTOR SEARCH)
+# TAB 7: SCHEDULE OF RATES & SEMANTIC MATCHER
 # =============================================================================
 with tab_rates:
     st.subheader("Schedule of Rates (SOR) & Semantic Vector Matcher")
     st.caption("CPWD Delhi Schedule of Rates (DSR 2023) baseline parameters coupled with vector space cosine similarity to match raw BIM strings to official DSR line items.")
 
-    # Semantic Rate Matcher Expander
     with st.expander("🔎 Semantic Rate Search (Vector Cosine Similarity over CPWD DSR)", expanded=True):
         st.caption("Type any raw specification, material tag, or contractor billing description to find the closest official CPWD item codes with confidence scoring.")
         
@@ -749,7 +841,7 @@ with tab_rates:
 
 
 # =============================================================================
-# TAB 7: EXPORT CENTER
+# TAB 8: EXPORT CENTER
 # =============================================================================
 with tab_export:
     st.subheader("Professional Export Center")
