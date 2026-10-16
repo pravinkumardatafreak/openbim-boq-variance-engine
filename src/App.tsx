@@ -49,6 +49,7 @@ import { BIMGenAICopilot } from './core/genaiCopilot';
 import { BOQExcelExporter } from './core/excelExporter';
 import { ThreeBimViewer } from './components/ThreeBimViewer';
 import { VisionAiCenter } from './components/VisionAiCenter';
+import { TimeSeriesProgressCenter } from './components/TimeSeriesProgressCenter';
 
 export const App: React.FC = () => {
   // Theme State (Light vs Dark mode with local storage persistence)
@@ -687,7 +688,7 @@ export const App: React.FC = () => {
               { label: '📋 Automated BOQ', id: 1 },
               { label: '🔍 AI Anomaly Audit', id: 2 },
               { label: '🤖 GenAI Copilot', id: 3 },
-              { label: '📊 Cost Analytics', id: 4 },
+              { label: '📊 Cost & 4D Time-Series', id: 4 },
               { label: '🧪 Benchmark & Deep Learning Lab', id: 5 },
               { label: '👁️ L&T Vision AI & Digital Twin', id: 6 },
               { label: '💰 Schedule of Rates', id: 7 },
@@ -1435,6 +1436,11 @@ export const App: React.FC = () => {
                     );
                   })}
                 </div>
+              </div>
+
+              {/* 4D Time-Series Dataset Engine & Predictive S-Curve */}
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
+                <TimeSeriesProgressCenter isDarkMode={isDarkMode} />
               </div>
             </div>
           )}
