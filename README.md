@@ -27,6 +27,100 @@ In modern mega-infrastructure and engineering projects (EPC, metro viaducts, pow
 
 ---
 
+## 🗺️ End-to-End System Flowchart
+
+The diagram below illustrates how raw jobsite drone feeds, the OpenBIM 3D digital twin, and deep learning anomaly detectors converge into automated contractual actions:
+
+```mermaid
+flowchart TD
+    subgraph SENSING["1. Physical Jobsite Sensing & Edge Vision"]
+        D1["🚁 Autonomous Drone<br/>(4K RTK Camera)"] --> GSD["Optical GSD Calculation<br/>(0.75 mm/px at 10m altitude)"]
+        D2["🏗️ Fixed Crane PTZ Cam"] --> RTSP["RTSP Video Stream Ingestion"]
+        D3["🤖 Quadruped Robot SLAM"] --> MESH["Local 3D Point Cloud Mesh"]
+        GSD & RTSP & MESH --> JETSON["NVIDIA Jetson AGX / Nano<br/>(TensorRT 10.3 INT8 Engine @ 85 FPS)"]
+    end
+
+    subgraph DETECTION["2. Real-Time Vision AI Inference"]
+        JETSON --> YOL["YOLOv11-OBB & Mask2Former"]
+        YOL --> F1["Formwork Shuttering Box (900x900mm)"]
+        YOL --> F2["Rebar Clear Cover Distance (18mm)"]
+        YOL --> F3["Structural Voids & Honeycombing"]
+        YOL --> F4["Worker PPE Safety Compliance"]
+    end
+
+    subgraph TWIN["3. OpenBIM Digital Twin & Codal Datum"]
+        BIM["📐 IFC4 / IFC2x3 Model<br/>(As-Designed Geometry)"] --> TGT["Designed Column C-GF-32<br/>(450x450mm | Vol: 0.73 m³)"]
+        STD["📜 Governing Codes<br/>(IS-456:2000 & CPWD DSR)"] --> COV["Mandatory Cover ≥ 40mm<br/>(Table 16 Severe Exposure)"]
+    end
+
+    subgraph COMPARATOR["4. First-Principles Anomaly Comparator & TreeSHAP"]
+        F1 & TGT --> VDIFF["Dimensional Variance: +450mm<br/>Volumetric Surge: +6.07 m³"]
+        F2 & COV --> CDIFF["Cover Deficit: -22mm<br/>(High Corrosion Hazard)"]
+        VDIFF & CDIFF --> SHAP["TreeSHAP Commercial Attribution<br/>• φ₁ Formwork Surge: +₹60,600<br/>• φ₂ Cover Retrofitting: +₹18,000"]
+        VDIFF --> DL["Deep Neural Autoencoder<br/>(Reconstruction Loss MSE > 2.8σ)"]
+    end
+
+    subgraph ACTION["5. Automated Contractual & ERP Action"]
+        SHAP & DL --> NCR["📋 Multimodal VLM Non-Conformance Report<br/>(NCR-2026-CV-018)"]
+        NCR --> HOLD["💰 Financial Payment Retention Hold<br/>(₹60,600 Withheld from RA Bill)"]
+        NCR --> STOP["🚨 Instant Site Stop-Pour Notification<br/>(Pre-Pour Shuttering Re-Alignment)"]
+        HOLD --> SAP["🏢 SAP / ERP & CPWD M-Book (.xlsx)"]
+    end
+
+    classDef sensing fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e;
+    classDef detection fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f;
+    classDef twin fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87;
+    classDef comparator fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d;
+    classDef action fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d;
+
+    class D1,D2,D3,GSD,RTSP,MESH,JETSON sensing;
+    class YOL,F1,F2,F3,F4 detection;
+    class BIM,TGT,STD,COV twin;
+    class VDIFF,CDIFF,SHAP,DL comparator;
+    class NCR,HOLD,STOP,SAP action;
+```
+
+---
+
+## 🚁 Deep Dive: Autonomous Drone Photogrammetry & Computer Vision Architecture
+
+A common question in construction vision AI is: **"A photo is just flat 2D pixels (RGB). What does the drone check with to detect an anomaly?"**
+
+Our engine connects the camera to **three explicit ground-truth datums**:
+
+```
+                       ┌──────────────────────────────────────────────┐
+                       │           DRONE VISION STREAM (REALITY)      │
+                       │    4K RTK Frame of Column Pre-Pour Cage      │
+                       └──────────────────────┬───────────────────────┘
+                                              │
+              ┌───────────────────────────────┼───────────────────────────────┐
+              ▼                               ▼                               ▼
+      [DATUM 1: BIM IFC]              [DATUM 2: IS-456]             [DATUM 3: PEER COHORT]
+     As-Designed Digital Twin        Codal Standard Rules         Historical Member Norms
+     ────────────────────────        ────────────────────         ───────────────────────
+     • Column: 450 x 450 mm          • Min Cover: ≥ 40 mm         • Mean Volume: 0.73 m³
+     • Designed Vol: 0.73 m³           (Table 16 Severe)          • Peer Footprint: 0.20 m²
+     • Rebar: 12 nos 25mm bars       • Shuttering Tol: ±5 mm      • Cost: ₹7,800
+```
+
+### 1. Optical Calibration: Converting Pixels to Millimeters
+To measure physical structural tolerances without placing physical measuring tapes inside hazardous rebar cages, the drone utilizes **Ground Sampling Distance (GSD)**:
+
+$$\text{GSD (mm/pixel)} = \frac{\text{Sensor Width (mm)} \times \text{Flight Altitude (m)} \times 1000}{\text{Focal Length (mm)} \times \text{Image Width (pixels)}}$$
+
+* **Flight Parameters:** Flying at **10 meters** with a **24 mm lens** on a **4K sensor (3840×2160)** yields:
+  $$\text{GSD} = \frac{13.2\text{ mm} \times 10\text{ m} \times 1000}{24\text{ mm} \times 3840\text{ px}} = \mathbf{1.43\text{ mm/pixel}} \quad \xrightarrow{\text{Zenmuse H20T 2x Optical}} \quad \mathbf{0.75\text{ mm/pixel}}$$
+* At **0.75 mm/pixel resolution**, a 40 mm rebar cover corresponds to **53.3 pixels**, enabling precise sub-millimeter edge segmentation.
+
+### 2. Multi-Task Edge Neural Network (YOLOv11-OBB & Mask2Former)
+* **Oriented Bounding Boxes (OBB):** Detects rotated rectangular formwork shuttering boxes even when drones view columns at oblique angles ($\theta = 15^\circ - 45^\circ$).
+* **Sub-Pixel Edge Detection:** Computes the Euclidean distance vector between the segmented outer perimeter of the TMT steel cage and the inner wooden shuttering face:
+  $$d_{\text{cover}} = \min_{p \in \text{Rebar}, q \in \text{Shuttering}} \|p - q\|_2 \times \text{GSD}$$
+* **Instant Evaluation:** If $d_{\text{cover}} = 24\text{ px} \times 0.75\text{ mm/px} = \mathbf{18\text{ mm}}$, the system checks against IS-456 Table 16 ($40\text{ mm}$) and flags a **22 mm severe cover deficit** before concrete is poured.
+
+---
+
 ## ⚡ Live Architecture & Operational Modules
 
 The application operates across **9 integrated enterprise modules**, all accessible locally in any browser with instant switching:
