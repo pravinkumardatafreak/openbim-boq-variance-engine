@@ -116,10 +116,19 @@ ${context}`,
         model: 'gemini-2.5-flash',
         contents: [
           {
-            text: `You are the OpenBIM Structural Cost Copilot and Senior Quantity Surveyor. Ground all answers strictly on the following active model data:
+            text: `You are the Lead Structural Quantity Surveyor and Site QA/QC Director for a major EPC project (Larsen & Toubro). 
+Ground all answers strictly on the active project data below.
+If the user asks about anomalies, defects, site issues, or flagged items, NEVER give a generic textbook answer. Always cite:
+1. The exact flagged member tags (Column C-GF-32, Footing F-23, Beam B-1F-X2-2).
+2. The physical root causes (e.g. 4x depth typo, oversized raft-stub, 18mm rebar cover deficit vs 40mm IS-456 Table 16).
+3. The exact commercial financial exposure in ₹ INR.
+4. Immediate corrective action before pouring concrete.
+
+ACTIVE PROJECT DATA:
 ${context}
+
 User question: "${userMessage}"
-Be quantitative, concise, cite CPWD DSR 2023 rates and specific member tags.`,
+Be quantitative, concise, cite CPWD DSR 2023 rates, IS-456 clauses, and specific member tags.`,
           },
         ],
       });
@@ -187,6 +196,39 @@ Multivariate Isolation Forest and Class-Conditioned Stratified Residual scoring 
 
   private generateFallbackChatResponse(userMessage: string, kpis: KPISummary, auditSummary: AuditSummary): string {
     const q = userMessage.toLowerCase();
+
+    // Check for general anomaly / site defect / problem / risk questions
+    if (
+      q.includes('anom') ||
+      q.includes('defect') ||
+      q.includes('site') ||
+      q.includes('issue') ||
+      q.includes('flag') ||
+      q.includes('risk') ||
+      q.includes('problem') ||
+      q.includes('discrepan') ||
+      q.includes('wrong') ||
+      q.includes('error')
+    ) {
+      return `**🚨 Site Structural Anomaly & Defect Audit Report:**
+
+The engine has flagged **${auditSummary.high_risk_count} critical structural anomalies** with a total financial commercial risk of **₹${auditSummary.at_risk_cost_lakhs.toFixed(2)} Lakhs**:
+
+1. **Column C-GF-32 (Ground Floor, Grid Line B4):**
+   - **BIM 3D Design Typo:** Modeler entered depth as **$2.40\\,\\text{m}$ instead of $0.60\\,\\text{m}$** (400% volume surge to $2.592\\,\\text{m}^3$).
+   - **Physical Site Drone Vision AI:** Physical shuttering box measured **$900\\times 900\\,\\text{mm}$** with a severe **18 mm clear cover deficit** violating **IS-456 Table 16** (minimum 40 mm required).
+   - **Financial Exposure:** **₹60,600** excess concrete & shuttering billed; **Stop-pour order issued**.
+
+2. **Isolated Foundation Footing F-23 (#16 Substructure):**
+   - **BIM Design Discrepancy:** Massive **$13.23\\,\\text{m}^3$** volume ($+320\\%$ over peer mean $3.15\\,\\text{m}^3$).
+   - **Site Robot SLAM Inspection:** Detected an oversized excavation footprint ($23.4\\,\\text{m}^2$ vs $4.0\\,\\text{m}^2$) and deep aggregate **honeycombing (>60 mm void)** with exposed rebar.
+   - **Financial Retention:** **₹2,10,000 withheld** pending UPV ultrasonic pulse velocity testing and epoxy pressure grouting.
+
+3. **Floor Beam B-1F-X2-2 (Level 1 Framing):**
+   - **Property Set Violation:** Missing structural material grade in Revit export; fallback M25 applied instead of design M30.
+
+*Recommendation:* Issue immediate pre-pour stop notices for Column C-GF-32 and Footing F-23, and hold contractor progress billing until rectified.`;
+    }
 
     if (q.includes('c-gf-32') || q.includes('column')) {
       return `**Analysis for Column C-GF-32 (Ground Floor Level):**
