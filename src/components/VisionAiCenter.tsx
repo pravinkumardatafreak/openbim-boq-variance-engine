@@ -242,7 +242,68 @@ export const VisionAiCenter: React.FC<VisionAiCenterProps> = ({ isDarkMode = fal
               Cross-references site visual vision frames with the 3D BIM model and CPWD/IS-456 standards to generate binding audit documentation.
             </p>
 
-            <div className="space-y-2 text-xs">
+            <div className="space-y-3 text-xs">
+              {/* Grounded Confidence Matrix */}
+              {feed.vlm_ncr_memo.confidence_breakdown && (
+                <div className="p-3 rounded-lg bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] uppercase font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1">
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                      Audited Grounding & Calibrated Confidence:
+                    </span>
+                    <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300 text-xs bg-emerald-100 dark:bg-emerald-900 px-2 py-0.5 rounded-full">
+                      {feed.vlm_ncr_memo.confidence_breakdown.overall_pct}% Verified
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 text-[11px]">
+                    <div className="text-slate-600 dark:text-slate-300">
+                      <b className="text-slate-800 dark:text-slate-200">Vision Grounding:</b>{' '}
+                      {feed.vlm_ncr_memo.confidence_breakdown.sensor_grounding}
+                    </div>
+                    <div className="text-slate-600 dark:text-slate-300">
+                      <b className="text-slate-800 dark:text-slate-200">Point Cloud Registration:</b>{' '}
+                      {feed.vlm_ncr_memo.confidence_breakdown.point_cloud_tolerance}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Stakeholder-Centric Shapley Commercial Attribution */}
+              {feed.vlm_ncr_memo.shapley_commercial_attribution && (
+                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] uppercase font-bold text-indigo-700 dark:text-sky-300 flex items-center gap-1">
+                      <Activity className="w-3.5 h-3.5" />
+                      Stakeholder Shapley Commercial Attribution (TreeSHAP in ₹):
+                    </span>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                      Baseline: ₹{feed.vlm_ncr_memo.shapley_commercial_attribution.baseline_expected_cost.toLocaleString()}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5 pt-1">
+                    {feed.vlm_ncr_memo.shapley_commercial_attribution.surges.map((s, sIdx) => (
+                      <div
+                        key={sIdx}
+                        className="p-2 rounded bg-white dark:bg-slate-850 border border-slate-200 dark:border-slate-750 flex flex-col gap-1"
+                      >
+                        <div className="flex justify-between items-center text-[11px]">
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">{s.feature}</span>
+                          <span className={`font-mono font-bold ${s.impact_inr > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                            {s.impact_inr > 0 ? `+ ₹${s.impact_inr.toLocaleString()}` : 'Compliant (₹0)'}
+                            {s.impact_pct > 0 && <span className="text-[10px] ml-1 font-normal">({s.impact_pct.toFixed(1)}%)</span>}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400 italic">
+                          💡 {s.plain_explanation}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
                 <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Clause & Specification:</div>
                 <div className="font-semibold text-slate-800 dark:text-slate-200">{feed.vlm_ncr_memo.clause_reference}</div>
@@ -264,7 +325,7 @@ export const VisionAiCenter: React.FC<VisionAiCenterProps> = ({ isDarkMode = fal
               </div>
 
               <div className="flex justify-between items-center pt-1 border-t border-slate-100 dark:border-slate-800">
-                <span className="text-[11px] text-slate-500 dark:text-slate-400">Recommended Contractor Retention:</span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Recommended Contractor Payment Retention:</span>
                 <span className="font-mono font-bold text-red-600 dark:text-red-400 text-sm">
                   ₹{feed.vlm_ncr_memo.financial_retention_inr.toLocaleString()}
                 </span>
