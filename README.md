@@ -27,58 +27,78 @@ In modern mega-infrastructure and engineering projects (EPC, metro viaducts, pow
 
 ---
 
-## 🗺️ End-to-End System Flowchart
+## 🗺️ System Architecture & Data Flow Pipeline
 
-The diagram below illustrates how raw jobsite drone feeds, the OpenBIM 3D digital twin, and deep learning anomaly detectors converge into automated contractual actions:
+The end-to-end intelligence engine unifies jobsite sensing, edge computer vision, 3D BIM design geometry, and ERP financial billing through a high-throughput, closed-loop pipeline:
 
 ```mermaid
-flowchart TD
-    subgraph SENSING["1. Physical Jobsite Sensing & Edge Vision"]
-        D1["🚁 Autonomous Drone<br/>(4K RTK Camera)"] --> GSD["Optical GSD Calculation<br/>(0.75 mm/px at 10m altitude)"]
-        D2["🏗️ Fixed Crane PTZ Cam"] --> RTSP["RTSP Video Stream Ingestion"]
-        D3["🤖 Quadruped Robot SLAM"] --> MESH["Local 3D Point Cloud Mesh"]
-        GSD & RTSP & MESH --> JETSON["NVIDIA Jetson AGX / Nano<br/>(TensorRT 10.3 INT8 Engine @ 85 FPS)"]
+flowchart LR
+    %% 5-Stage Enterprise Pipeline (Left-to-Right Flow)
+    subgraph STAGE1["1. JOBSITE SENSING"]
+        direction TB
+        A1["🚁 Autonomous Drone<br/>(4K RTK Camera)"]
+        A2["🏗️ Tower Crane Stream<br/>(RTSP Telemetry)"]
+        A3["🤖 Quadruped Robot<br/>(Visual SLAM)"]
     end
 
-    subgraph DETECTION["2. Real-Time Vision AI Inference"]
-        JETSON --> YOL["YOLOv11-OBB & Mask2Former"]
-        YOL --> F1["Formwork Shuttering Box (900x900mm)"]
-        YOL --> F2["Rebar Clear Cover Distance (18mm)"]
-        YOL --> F3["Structural Voids & Honeycombing"]
-        YOL --> F4["Worker PPE Safety Compliance"]
+    subgraph STAGE2["2. EDGE VISION (JETSON)"]
+        direction TB
+        B1["Optical GSD Calibration<br/>0.75 mm / pixel"]
+        B2["TensorRT 10.3 INT8<br/>84.7 FPS @ 11.4 ms"]
+        B3["YOLOv11-OBB & Mask2Former<br/>Sub-Pixel Segmentation"]
     end
 
-    subgraph TWIN["3. OpenBIM Digital Twin & Codal Datum"]
-        BIM["📐 IFC4 / IFC2x3 Model<br/>(As-Designed Geometry)"] --> TGT["Designed Column C-GF-32<br/>(450x450mm | Vol: 0.73 m³)"]
-        STD["📜 Governing Codes<br/>(IS-456:2000 & CPWD DSR)"] --> COV["Mandatory Cover ≥ 40mm<br/>(Table 16 Severe Exposure)"]
+    subgraph STAGE3["3. DIGITAL TWIN (BIM)"]
+        direction TB
+        C1["OpenBIM IFC4 / IFC2x3<br/>As-Designed Geometry"]
+        C2["IS-456:2000 Table 16<br/>Mandatory Cover Rules"]
+        C3["CPWD DSR 2023<br/>Schedule of Rates"]
     end
 
-    subgraph COMPARATOR["4. First-Principles Anomaly Comparator & TreeSHAP"]
-        F1 & TGT --> VDIFF["Dimensional Variance: +450mm<br/>Volumetric Surge: +6.07 m³"]
-        F2 & COV --> CDIFF["Cover Deficit: -22mm<br/>(High Corrosion Hazard)"]
-        VDIFF & CDIFF --> SHAP["TreeSHAP Commercial Attribution<br/>• φ₁ Formwork Surge: +₹60,600<br/>• φ₂ Cover Retrofitting: +₹18,000"]
-        VDIFF --> DL["Deep Neural Autoencoder<br/>(Reconstruction Loss MSE > 2.8σ)"]
+    subgraph STAGE4["4. ANOMALY & EXPLAINABILITY"]
+        direction TB
+        D1["First-Principles Comparator<br/>Δ Dimension & Δ Volume"]
+        D2["Deep Neural Autoencoder<br/>Reconstruction MSE > 2.5σ"]
+        D3["TreeSHAP Attribution<br/>Commercial Impact in ₹"]
     end
 
-    subgraph ACTION["5. Automated Contractual & ERP Action"]
-        SHAP & DL --> NCR["📋 Multimodal VLM Non-Conformance Report<br/>(NCR-2026-CV-018)"]
-        NCR --> HOLD["💰 Financial Payment Retention Hold<br/>(₹60,600 Withheld from RA Bill)"]
-        NCR --> STOP["🚨 Instant Site Stop-Pour Notification<br/>(Pre-Pour Shuttering Re-Alignment)"]
-        HOLD --> SAP["🏢 SAP / ERP & CPWD M-Book (.xlsx)"]
+    subgraph STAGE5["5. CONTRACTUAL ACTION"]
+        direction TB
+        E1["Multimodal VLM NCR<br/>Binding Quality Notice"]
+        E2["Financial Retention Hold<br/>Payment Deductions"]
+        E3["SAP / ERP M-Book<br/>Multi-Tab .xlsx Export"]
     end
 
-    classDef sensing fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#0c4a6e;
-    classDef detection fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f;
-    classDef twin fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#581c87;
-    classDef comparator fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#7f1d1d;
-    classDef action fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d;
+    A1 --> B1
+    A2 --> B2
+    A3 --> B2
+    B1 --> B3
+    B3 --> D1
+    C1 --> D1
+    C2 --> D1
+    C3 --> D3
+    D1 --> D2
+    D2 --> D3
+    D3 --> E1
+    E1 --> E2
+    E2 --> E3
 
-    class D1,D2,D3,GSD,RTSP,MESH,JETSON sensing;
-    class YOL,F1,F2,F3,F4 detection;
-    class BIM,TGT,STD,COV twin;
-    class VDIFF,CDIFF,SHAP,DL comparator;
-    class NCR,HOLD,STOP,SAP action;
+    style STAGE1 fill:#f0f9ff,stroke:#0284c7,stroke-width:2px;
+    style STAGE2 fill:#fffbeb,stroke:#d97706,stroke-width:2px;
+    style STAGE3 fill:#faf5ff,stroke:#9333ea,stroke-width:2px;
+    style STAGE4 fill:#fef2f2,stroke:#dc2626,stroke-width:2px;
+    style STAGE5 fill:#f0fdf4,stroke:#16a34a,stroke-width:2px;
 ```
+
+### 📋 Layer-by-Layer Architectural Specifications
+
+| Pipeline Stage | Inputs & Data Sources | Computational Engine | Governing Standard / Metric | Output & Commercial Action |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Site Sensing** | Drone 4K video, crane RTSP stream, robot SLAM point clouds. | Flight planning grid (80/70 overlap), RTK-GPS base station. | Millimeter georeferenced spatial datum. | High-resolution raw frames + altitude telemetry. |
+| **2. Edge AI** | 4K image stream (3840×2160 px). | **NVIDIA Jetson AGX Orin / Nano** via TensorRT INT8. | $\text{GSD} = 0.75\text{ mm/pixel}$, 84.7 FPS throughput. | Segmented rebar instances & oriented shuttering boxes. |
+| **3. Digital Twin** | IFC4 / IFC2x3 architectural & structural schema. | Parametric B-Rep parser & surface area extractor. | **IS-456:2000 Cl. 26.4**, **CPWD DSR 2023** rate codes. | Planned spatial primitives ($L, W, H, V_{\text{BIM}}$). |
+| **4. AI Comparator** | Physical detected dimension ($w_{\text{actual}}$) vs planned ($w_{\text{BIM}}$). | **First-Principles Closed Form** + **Deep Autoencoder** + **TreeSHAP**. | $O(1)$ constant time scale factor ($\lambda = \frac{W_{\text{vis}}}{W_{\text{BIM}}}$). | Quantified volumetric surge ($\Delta V$) and Rupee attribution ($₹$). |
+| **5. Contractual Action** | Verified structural anomaly & excess concrete billing. | Multimodal Vision-Language Model (VLM). | ISO 9001 / CPWD Clause 5.3 inspection mandates. | **Binding Non-Conformance Report (NCR)** + **SAP Payment Hold**. |
 
 ---
 
