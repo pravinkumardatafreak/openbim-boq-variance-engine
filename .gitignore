@@ -42,3 +42,11 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 .DS_Store
+
+# Node / Web Build
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+

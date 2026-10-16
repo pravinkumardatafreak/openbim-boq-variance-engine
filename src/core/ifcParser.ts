@@ -17,6 +17,14 @@ const STRUCTURAL_IFC_CLASSES = new Set([
 
 const CONCRETE_GRADE_REGEX = /\b(M\s*15|M\s*20|M\s*25|M\s*30|M\s*35|M\s*40|M\s*50|M\s*60)\b/i;
 
+/** IFC Name attribute is the second quoted string (first is GlobalId). */
+function ifcDisplayName(params: string, fallback: string): string {
+  const quoted = Array.from(params.matchAll(/'([^']*)'/g)).map((m) => m[1]);
+  if (quoted.length >= 2 && quoted[1].trim()) return quoted[1];
+  if (quoted.length >= 1 && quoted[0].trim()) return quoted[0];
+  return fallback;
+}
+
 export function loadSampleModel(): { metadata: ModelMetadata; elements: RawBIMElement[] } {
   const data = sampleTowerData as { metadata: ModelMetadata; elements: RawBIMElement[] };
   return {
@@ -65,16 +73,13 @@ export function parseIFCContent(content: string): { metadata: ModelMetadata; ele
     const params = rest.substring(parenIdx);
     entityMap.set(id, { id, type, params });
 
-    // Look for project / building names
+    // Look for project / building names (skip GlobalId — use Name attribute)
     if (type === 'IFCPROJECT') {
-      const nameMatch = params.match(/'([^']*)'/);
-      if (nameMatch) metadata.project_name = nameMatch[1];
+      metadata.project_name = ifcDisplayName(params, metadata.project_name);
     } else if (type === 'IFCBUILDING') {
-      const nameMatch = params.match(/'([^']*)'/);
-      if (nameMatch) metadata.building_name = nameMatch[1];
+      metadata.building_name = ifcDisplayName(params, metadata.building_name);
     } else if (type === 'IFCSITE') {
-      const nameMatch = params.match(/'([^']*)'/);
-      if (nameMatch) metadata.site_name = nameMatch[1];
+      metadata.site_name = ifcDisplayName(params, metadata.site_name);
     }
   }
 
@@ -82,8 +87,7 @@ export function parseIFCContent(content: string): { metadata: ModelMetadata; ele
   const storeyMap = new Map<string, string>(); // storeyId -> storeyName
   for (const [id, ent] of entityMap.entries()) {
     if (ent.type === 'IFCBUILDINGSTOREY') {
-      const nameMatch = ent.params.match(/'([^']*)'/);
-      storeyMap.set(id, nameMatch ? nameMatch[1] : 'Level');
+      storeyMap.set(id, ifcDisplayName(ent.params, 'Level'));
     }
   }
 
@@ -91,13 +95,17 @@ export function parseIFCContent(content: string): { metadata: ModelMetadata; ele
   const elementStoreyMap = new Map<string, string>();
   for (const [, ent] of entityMap.entries()) {
     if (ent.type === 'IFCRELCONTAINEDINSPATIALSTRUCTURE') {
-      const targetStoreyMatch = ent.params.match(/,\s*(#[0-9]+)\s*\);?$/);
-      const targetStoreyId = targetStoreyMatch ? targetStoreyMatch[1] : null;
+      const trailingStorey = ent.params.match(/,\s*(#[0-9]+)\s*\)\s*;?\s*$/);
+      const leadingStorey = ent.params.match(
+        /IFCRELCONTAINEDINSPATIALSTRUCTURE\s*\([^,]+,[^,]+,[^,]+,[^,]+,\s*(#[0-9]+)\s*,/i
+      );
+      const targetStoreyId = trailingStorey?.[1] ?? leadingStorey?.[1] ?? null;
       const storeyName = targetStoreyId ? storeyMap.get(targetStoreyId) || 'Level' : 'Level';
 
-      const itemsMatch = ent.params.match(/\((#[0-9, #]+)\)/);
-      if (itemsMatch) {
-        const itemIds = itemsMatch[1].split(',').map((s) => s.trim());
+      const listMatch = ent.params.match(/\(\s*(#[0-9]+(?:\s*,\s*#[0-9]+)*)\s*\)\s*,\s*#[0-9]+\s*\)/i)
+        ?? ent.params.match(/\(\s*(#[0-9]+(?:\s*,\s*#[0-9]+)*)\s*\)\s*;?\s*$/i);
+      if (listMatch) {
+        const itemIds = listMatch[1].split(',').map((s) => s.trim());
         for (const itemId of itemIds) {
           elementStoreyMap.set(itemId, storeyName);
         }

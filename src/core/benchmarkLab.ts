@@ -1,72 +1,136 @@
 import { BenchmarkModelResult, EnrichedBIMElement } from '../types/bim';
+import {
+  ORIGINAL_BENCHMARK_DATASETS,
+  OriginalBenchmarkDataset,
+  GroundTruthBIMElement,
+} from '../data/benchmarkDatasets';
+import {
+  runDeepLearningBenchmark,
+  DeepLearningBenchmarkSuite,
+  DeepLearningTrainingHistory,
+  DeepElementPrediction,
+} from './deepLearningAnomaly';
+
+export interface ComprehensiveBenchmarkResult {
+  dataset_id: string;
+  dataset_name: string;
+  dataset_source: string;
+  is_ground_truth: boolean;
+  total_samples: number;
+  anomaly_count: number;
+  anomaly_rate_pct: number;
+  model_results: Record<string, BenchmarkModelResult>;
+  deep_learning_history: DeepLearningTrainingHistory;
+  deep_element_predictions: DeepElementPrediction[];
+  feature_names: string[];
+}
 
 export class AnomalyBenchmarkLab {
+  /**
+   * Run multi-model benchmark on active loaded BIM elements (with synthetic corruption injection).
+   */
   public runMultiModelBenchmark(
     elements: EnrichedBIMElement[],
     corruptionRatePct: number = 8
   ): Record<string, BenchmarkModelResult> {
-    const n = elements.length;
-    const nCorrupt = Math.max(Math.floor((n * corruptionRatePct) / 100), 4);
+    const fullSuite = this.runComprehensiveBenchmark(elements, 'active_model', corruptionRatePct);
+    return fullSuite.model_results;
+  }
 
-    // 1. Isolation Forest (Tree recursive partitioning)
-    // Produces high ROC-AUC and high PR-AUC on non-linear multi-variate volumetric surges
-    const iforestFpr = [0.0, 0.02, 0.04, 0.06, 0.08, 0.12, 0.18, 0.25, 0.4, 0.6, 0.8, 1.0];
-    const iforestTpr = [0.0, 0.45, 0.72, 0.88, 0.94, 0.97, 0.99, 1.0, 1.0, 1.0, 1.0, 1.0];
-    const iforestRec = [0.0, 0.2, 0.4, 0.6, 0.75, 0.88, 0.94, 1.0];
-    const iforestPrec = [1.0, 0.98, 0.95, 0.92, 0.89, 0.84, 0.79, 0.72];
+  /**
+   * Run comprehensive benchmark across Deep Learning, Isolation Forest,
+   * Stratified Physical Residuals, LOF, and MCD. Supports both the active model
+   * and original ground-truth verified datasets!
+   */
+  public runComprehensiveBenchmark(
+    elements: EnrichedBIMElement[],
+    datasetChoice: string = 'active_model',
+    corruptionRatePct: number = 8
+  ): ComprehensiveBenchmarkResult {
+    let targetElements: EnrichedBIMElement[];
+    let labels: number[];
+    let datasetName: string;
+    let datasetSource: string;
+    let isGroundTruth = false;
 
-    // 2. Local Outlier Factor (Density reachability distance)
-    const lofFpr = [0.0, 0.04, 0.08, 0.12, 0.18, 0.26, 0.38, 0.52, 0.7, 0.85, 1.0];
-    const lofTpr = [0.0, 0.38, 0.62, 0.78, 0.85, 0.91, 0.95, 0.98, 1.0, 1.0, 1.0];
-    const lofRec = [0.0, 0.2, 0.4, 0.6, 0.75, 0.85, 0.92, 1.0];
-    const lofPrec = [1.0, 0.92, 0.88, 0.83, 0.78, 0.71, 0.64, 0.58];
+    if (datasetChoice !== 'active_model' && ORIGINAL_BENCHMARK_DATASETS[datasetChoice]) {
+      const orig = ORIGINAL_BENCHMARK_DATASETS[datasetChoice];
+      isGroundTruth = true;
+      datasetName = orig.name;
+      datasetSource = orig.authoritative_source;
 
-    // 3. Robust Elliptic Envelope (Mahalanobis Distance / Minimum Covariance Determinant)
-    const mcdFpr = [0.0, 0.05, 0.1, 0.16, 0.24, 0.35, 0.48, 0.62, 0.8, 1.0];
-    const mcdTpr = [0.0, 0.32, 0.55, 0.7, 0.81, 0.88, 0.92, 0.96, 1.0, 1.0];
-    const mcdRec = [0.0, 0.2, 0.4, 0.6, 0.75, 0.82, 0.9, 1.0];
-    const mcdPrec = [1.0, 0.86, 0.81, 0.75, 0.69, 0.62, 0.55, 0.49];
+      targetElements = orig.elements.map((el) => {
+        const vol = el.net_volume || 1.0;
+        const rebarDensity = el.ifc_type === 'IfcColumn' ? 140 : el.ifc_type === 'IfcBeam' ? 110 : 80;
+        const rebarKg = vol * rebarDensity;
+        const fw = (el.length || 3.0) * (el.width || 0.4) * 2;
+        return {
+          ...el,
+          concrete_vol_cum: vol,
+          rebar_density_kg_cum: rebarDensity,
+          rebar_kg: rebarKg,
+          rebar_tonne: rebarKg / 1000,
+          formwork_sqm: fw,
+          concrete_cost_inr: vol * 6500,
+          rebar_cost_inr: (rebarKg / 1000) * 72000,
+          formwork_cost_inr: fw * 550,
+          total_cost_inr: vol * 6500 + (rebarKg / 1000) * 72000 + fw * 550,
+        };
+      });
 
-    // Compute trapezoidal AUC
-    const calcAuc = (x: number[], y: number[]) => {
-      let area = 0;
-      for (let i = 0; i < x.length - 1; i++) {
-        area += 0.5 * (x[i + 1] - x[i]) * (y[i + 1] + y[i]);
+      labels = orig.elements.map((e) => e.ground_truth_label);
+    } else {
+      // Active loaded model: inject controlled synthetic corruption topology
+      targetElements = elements.map((e) => ({ ...e }));
+      const n = targetElements.length;
+      const nCorrupt = Math.max(Math.floor((n * corruptionRatePct) / 100), 4);
+      labels = new Array(n).fill(0);
+
+      // Deterministic pseudo-random corruption selection for reproducibility
+      for (let i = 0; i < nCorrupt; i++) {
+        const idx = Math.floor(((i + 1) * 37) % n);
+        labels[idx] = 1;
+        const el = targetElements[idx];
+        const mode = i % 3;
+        if (mode === 0) {
+          // Volume spike
+          el.concrete_vol_cum = (el.concrete_vol_cum || 2.0) * 3.5;
+        } else if (mode === 1) {
+          // Steel density surge
+          el.rebar_kg = (el.rebar_kg || 100) * 4.0;
+          el.rebar_density_kg_cum = (el.rebar_density_kg_cum || 100) * 4.0;
+        } else {
+          // Formwork mismatch
+          el.formwork_sqm = (el.formwork_sqm || 10) * 3.2;
+        }
       }
-      return Math.round(area * 1000) / 1000;
-    };
+
+      datasetName = '⚡ Active Loaded BIM Model (Controlled Synthetic Topology)';
+      datasetSource = 'Ingested IFC File with Parametric Volumetric Perturbations';
+    }
+
+    const suite: DeepLearningBenchmarkSuite = runDeepLearningBenchmark(targetElements, labels);
+    const anomCount = labels.filter((l) => l === 1).length;
 
     return {
-      'Isolation Forest (Recursive Tree Partitioning)': {
-        roc_auc: 0.964,
-        pr_auc: 0.918,
-        best_f1: 0.895,
-        optimal_threshold: -0.042,
-        fpr: iforestFpr,
-        tpr: iforestTpr,
-        recall: iforestRec,
-        precision: iforestPrec,
-      },
-      'Local Outlier Factor (Density Reachability)': {
-        roc_auc: 0.892,
-        pr_auc: 0.824,
-        best_f1: 0.815,
-        optimal_threshold: 1.385,
-        fpr: lofFpr,
-        tpr: lofTpr,
-        recall: lofRec,
-        precision: lofPrec,
-      },
-      'Robust Elliptic Envelope (Mahalanobis / MCD)': {
-        roc_auc: 0.846,
-        pr_auc: 0.762,
-        best_f1: 0.748,
-        optimal_threshold: 3.21,
-        fpr: mcdFpr,
-        tpr: mcdTpr,
-        recall: mcdRec,
-        precision: mcdPrec,
-      },
+      dataset_id: datasetChoice,
+      dataset_name: datasetName,
+      dataset_source: datasetSource,
+      is_ground_truth: isGroundTruth,
+      total_samples: targetElements.length,
+      anomaly_count: anomCount,
+      anomaly_rate_pct: Math.round((anomCount / targetElements.length) * 1000) / 10,
+      model_results: suite.model_results,
+      deep_learning_history: suite.training_history,
+      deep_element_predictions: suite.element_predictions,
+      feature_names: suite.feature_names,
     };
+  }
+
+  /**
+   * Get list of all available original benchmark datasets.
+   */
+  public getAvailableDatasets(): OriginalBenchmarkDataset[] {
+    return Object.values(ORIGINAL_BENCHMARK_DATASETS);
   }
 }

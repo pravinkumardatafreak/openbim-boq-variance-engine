@@ -10,6 +10,7 @@ interface ThreeBimViewerProps {
   showBoundingBoxes: boolean;
   onSelectElement: (element: AuditedBIMElement) => void;
   selectedElementTag?: string;
+  isDarkMode?: boolean;
 }
 
 const TYPE_COLORS: Record<string, number> = {
@@ -45,6 +46,7 @@ export const ThreeBimViewer: React.FC<ThreeBimViewerProps> = ({
   showBoundingBoxes,
   onSelectElement,
   selectedElementTag,
+  isDarkMode = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoveredElement, setHoveredElement] = useState<AuditedBIMElement | null>(null);
@@ -59,7 +61,7 @@ export const ThreeBimViewer: React.FC<ThreeBimViewerProps> = ({
 
     // Scene, Camera, Renderer
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf1f5f9);
+    scene.background = new THREE.Color(isDarkMode ? 0x090d16 : 0xf1f5f9);
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
     // Position camera for isometric architectural view
@@ -73,7 +75,7 @@ export const ThreeBimViewer: React.FC<ThreeBimViewerProps> = ({
     container.appendChild(renderer.domElement);
 
     // Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
+    const ambientLight = new THREE.AmbientLight(0xffffff, isDarkMode ? 0.95 : 0.85);
     scene.add(ambientLight);
 
     const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.7);
@@ -85,7 +87,9 @@ export const ThreeBimViewer: React.FC<ThreeBimViewerProps> = ({
     scene.add(dirLight2);
 
     // Ground Grid
-    const grid = new THREE.GridHelper(30, 15, 0x94a3b8, 0xe2e8f0);
+    const gridCenterColor = isDarkMode ? 0x38bdf8 : 0x94a3b8;
+    const gridLinesColor = isDarkMode ? 0x1e293b : 0xe2e8f0;
+    const grid = new THREE.GridHelper(30, 15, gridCenterColor, gridLinesColor);
     grid.position.y = -2.5;
     scene.add(grid);
 
@@ -289,21 +293,21 @@ export const ThreeBimViewer: React.FC<ThreeBimViewerProps> = ({
       cancelAnimationFrame(animationFrameId);
       renderer.dispose();
     };
-  }, [elements, colorBy, selectedStoreys, selectedTypes, showBoundingBoxes, selectedElementTag, onSelectElement]);
+  }, [elements, colorBy, selectedStoreys, selectedTypes, showBoundingBoxes, selectedElementTag, onSelectElement, isDarkMode]);
 
   return (
-    <div className="relative w-full rounded-xl overflow-hidden border border-slate-200 shadow-inner bg-slate-900/5">
+    <div className="relative w-full rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 shadow-inner bg-slate-900/5">
       <div ref={containerRef} className="w-full h-[520px] cursor-grab active:cursor-grabbing" />
 
       {/* Floating Instructions Banner */}
-      <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-200/80 text-[11px] font-medium text-slate-700 shadow-sm flex items-center gap-3">
+      <div className="absolute top-3 left-3 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-200/80 dark:border-slate-700/80 text-[11px] font-medium text-slate-700 dark:text-slate-200 shadow-sm flex items-center gap-3">
         <span>🖱️ <b>Left-Click + Drag:</b> Rotate</span>
-        <span className="text-slate-300">|</span>
+        <span className="text-slate-300 dark:text-slate-600">|</span>
         <span><b>Right-Click / Shift:</b> Pan</span>
-        <span className="text-slate-300">|</span>
+        <span className="text-slate-300 dark:text-slate-600">|</span>
         <span><b>Scroll:</b> Zoom</span>
-        <span className="text-slate-300">|</span>
-        <span className="text-indigo-600 font-semibold">Click element to inspect</span>
+        <span className="text-slate-300 dark:text-slate-600">|</span>
+        <span className="text-indigo-600 dark:text-indigo-400 font-semibold">Click element to inspect</span>
       </div>
 
       {/* Floating Tooltip for Hovered Element */}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Building2,
   Cpu,
@@ -21,6 +21,13 @@ import {
   ShieldAlert,
   ChevronDown,
   ChevronUp,
+  Sun,
+  Moon,
+  BrainCircuit,
+  Activity,
+  Database,
+  Zap,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   AuditedBIMElement,
@@ -35,16 +42,43 @@ import { loadSampleModel, parseIFCContent } from './core/ifcParser';
 import { BOQEngine } from './core/boqEngine';
 import { BIMAnomalyDetector } from './core/anomalyDetector';
 import { AnomalyExplainer } from './core/shapExplainer';
-import { AnomalyBenchmarkLab } from './core/benchmarkLab';
+import { AnomalyBenchmarkLab, ComprehensiveBenchmarkResult } from './core/benchmarkLab';
+import { ORIGINAL_BENCHMARK_DATASETS } from './data/benchmarkDatasets';
 import { SemanticSORMatcher } from './core/semanticMatcher';
 import { BIMGenAICopilot } from './core/genaiCopilot';
 import { BOQExcelExporter } from './core/excelExporter';
 import { ThreeBimViewer } from './components/ThreeBimViewer';
+import { VisionAiCenter } from './components/VisionAiCenter';
 
 export const App: React.FC = () => {
+  // Theme State (Light vs Dark mode with local storage persistence)
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('openbim_theme');
+      if (saved) return saved === 'dark';
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('openbim_theme', isDarkMode ? 'dark' : 'light');
+    } catch {
+      // ignore storage errors
+    }
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
+
   // Sidebar states
   const [modelSource, setModelSource] = useState<'sample' | 'custom'>('sample');
   const [customIfcName, setCustomIfcName] = useState<string>('');
+  const [uploadError, setUploadError] = useState<string>('');
   const [rawElements, setRawElements] = useState(() => loadSampleModel().elements);
   const [modelMeta, setModelMeta] = useState<ModelMetadata>(() => loadSampleModel().metadata);
 
@@ -54,10 +88,10 @@ export const App: React.FC = () => {
   const [isoContamination, setIsoContamination] = useState<number>(0.05);
   const [geminiApiKey, setGeminiApiKey] = useState<string>('');
 
-  // Active Tab
+  // Active Tab (0 to 7)
   const [activeTab, setActiveTab] = useState<number>(0);
 
-  // Tab 1 (3D Explorer) states
+  // Tab 0 (3D Explorer) states
   const [colorMode, setColorMode] = useState<'risk_level' | 'ifc_type' | 'concrete_grade'>('risk_level');
   const [selectedStoreys, setSelectedStoreys] = useState<string[]>([]);
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
@@ -65,14 +99,14 @@ export const App: React.FC = () => {
   const [selectedElementTag, setSelectedElementTag] = useState<string>('#16');
   const [isInspectorExpanded, setIsInspectorExpanded] = useState<boolean>(true);
 
-  // Tab 2 (BOQ) states
+  // Tab 1 (BOQ) states
   const [selectedCategory, setSelectedCategory] = useState<string>('All Categories');
 
-  // Tab 3 (Anomaly) states
+  // Tab 2 (Anomaly) states
   const [riskFilter, setRiskFilter] = useState<'ALL_FLAGGED' | 'HIGH_ONLY' | 'ALL'>('ALL_FLAGGED');
   const [showGlobalShap, setShowGlobalShap] = useState<boolean>(false);
 
-  // Tab 4 (Copilot) states
+  // Tab 3 (Copilot) states
   const [auditMemo, setAuditMemo] = useState<string>('');
   const [isGeneratingMemo, setIsGeneratingMemo] = useState<boolean>(false);
   const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([
@@ -85,13 +119,19 @@ export const App: React.FC = () => {
   const [chatInput, setChatInput] = useState<string>('');
   const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
 
-  // Tab 6 (Benchmark Lab) states
+  // Tab 5 (Benchmark & Deep Learning Lab) states
+  const [benchDatasetChoice, setBenchDatasetChoice] = useState<string>('commercial_tower_b');
   const [benchCorruptionRate, setBenchCorruptionRate] = useState<number>(8);
-  const [benchmarkResult, setBenchmarkResult] = useState(() =>
-    new AnomalyBenchmarkLab().runMultiModelBenchmark(loadSampleModel().elements as any, 8)
+  const [benchmarkResult, setBenchmarkResult] = useState<ComprehensiveBenchmarkResult>(() =>
+    new AnomalyBenchmarkLab().runComprehensiveBenchmark(
+      loadSampleModel().elements as any,
+      'commercial_tower_b',
+      8
+    )
   );
+  const [selectedDeepElementTag, setSelectedDeepElementTag] = useState<string>('');
 
-  // Tab 7 (Semantic Matcher) states
+  // Tab 6 (Semantic Matcher) states
   const [semanticQuery, setSemanticQuery] = useState<string>(
     'RCC M35 Design Mix high strength pumping concrete for transfer girders'
   );
@@ -127,19 +167,18 @@ export const App: React.FC = () => {
     return engine.getKPISummary(enrichedElements);
   }, [enrichedElements, effectiveRateMultiplier]);
 
-  // Run Anomaly Detection
-  const auditedElements: AuditedBIMElement[] = useMemo(() => {
+  // Instantiate TreeSHAP Explainer
+  const explainer = useMemo(() => new AnomalyExplainer(), []);
+
+  // Run AI Anomaly Detection Pipeline
+  const { auditedElements, auditSummary } = useMemo(() => {
     const detector = new BIMAnomalyDetector(isoContamination, zScoreThresh);
-    return detector.detectAnomalies(enrichedElements);
+    const audited = detector.detectAnomalies(enrichedElements);
+    const summary = detector.getAuditSummary(audited);
+    return { auditedElements: audited, auditSummary: summary };
   }, [enrichedElements, isoContamination, zScoreThresh]);
 
-  // Audit Summary
-  const auditSummary: AuditSummary = useMemo(() => {
-    const detector = new BIMAnomalyDetector(isoContamination, zScoreThresh);
-    return detector.getAuditSummary(auditedElements);
-  }, [auditedElements, isoContamination, zScoreThresh]);
-
-  // Available Storeys & Types
+  // Extract all unique storeys & types
   const allStoreys = useMemo(() => {
     return Array.from(new Set(auditedElements.map((e) => e.storey))).sort();
   }, [auditedElements]);
@@ -148,56 +187,50 @@ export const App: React.FC = () => {
     return Array.from(new Set(auditedElements.map((e) => e.ifc_type))).sort();
   }, [auditedElements]);
 
-  // Initialize selected storeys & types
+  // Re-sync 3D filters when a new model is loaded (upload / sample switch)
+  const modelRevisionKey = `${modelMeta.project_name}|${rawElements.length}|${rawElements[0]?.tag ?? ''}`;
+  const prevModelRevisionKey = useRef<string>('');
+
   useEffect(() => {
-    if (selectedStoreys.length === 0 && allStoreys.length > 0) {
-      setSelectedStoreys(allStoreys);
-    }
-    if (selectedTypes.length === 0 && allTypes.length > 0) {
-      setSelectedTypes(allTypes);
-    }
-  }, [allStoreys, allTypes]);
+    if (prevModelRevisionKey.current === modelRevisionKey) return;
+    prevModelRevisionKey.current = modelRevisionKey;
+    if (allStoreys.length > 0) setSelectedStoreys(allStoreys);
+    if (allTypes.length > 0) setSelectedTypes(allTypes);
+  }, [modelRevisionKey, allStoreys, allTypes]);
 
   // Selected Element for Inspector
   const selectedElement = useMemo(() => {
-    const found = auditedElements.find((e) => e.tag === selectedElementTag);
-    return found || auditedElements[0];
+    return auditedElements.find((e) => e.tag === selectedElementTag) || auditedElements[0];
   }, [auditedElements, selectedElementTag]);
 
-  // TreeSHAP Explanation for selected element
+  // TreeSHAP Instance Explanation for Inspector
   const shapExplanation = useMemo(() => {
-    if (!selectedElement) return null;
-    const explainer = new AnomalyExplainer();
+    if (!explainer || !selectedElement) return null;
     return explainer.explainInstance(selectedElement, auditedElements);
-  }, [selectedElement, auditedElements]);
+  }, [explainer, selectedElement, auditedElements]);
 
-  // Global SHAP Importance
-  const globalShapList = useMemo(() => {
-    const explainer = new AnomalyExplainer();
-    return explainer.computeGlobalFeatureImportance(auditedElements);
-  }, [auditedElements]);
+  // Global Feature Importance
+  const globalShapImportance = useMemo(() => {
+    if (!explainer || auditedElements.length === 0) return [];
+    return explainer.getGlobalImportance(auditedElements);
+  }, [explainer, auditedElements]);
 
-  // Semantic Matcher Runner
+  // Run Semantic Matcher on query change
   useEffect(() => {
+    if (!semanticQuery.trim()) return;
     const matcher = new SemanticSORMatcher();
-    const res = matcher.matchSpecification(semanticQuery, 3);
-    setSemanticMatches(res);
+    const matches = matcher.matchSpecification(semanticQuery, 3);
+    setSemanticMatches(matches);
   }, [semanticQuery]);
 
-  // Generate Memo on startup or trigger
-  useEffect(() => {
-    if (!auditMemo && auditedElements.length > 0) {
-      const copilot = new BIMGenAICopilot(geminiApiKey);
-      setAuditMemo(copilot.generateFallbackMemo(modelMeta, kpis, auditSummary));
-    }
-  }, [auditedElements, kpis, auditSummary, modelMeta]);
-
-  // File Upload Handler
+  // Handle Model Upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setModelSource('custom');
     setCustomIfcName(file.name);
+    setUploadError('');
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target?.result as string;
@@ -207,26 +240,60 @@ export const App: React.FC = () => {
           setModelMeta(parsed.metadata);
           setRawElements(parsed.elements);
           setSelectedElementTag(parsed.elements[0].tag);
+          setAuditMemo('');
+          setBenchmarkResult(
+            new AnomalyBenchmarkLab().runComprehensiveBenchmark(
+              parsed.elements as any,
+              'active_model',
+              benchCorruptionRate
+            )
+          );
+        } else {
+          setUploadError(
+            'No structural elements (columns, beams, slabs, footings, walls) were found in this IFC file.'
+          );
         }
       }
+    };
+    reader.onerror = () => {
+      setUploadError('Could not read the IFC file. Please try again.');
     };
     reader.readAsText(file);
   };
 
   const handleLoadSample = () => {
     setModelSource('sample');
+    setCustomIfcName('');
+    setUploadError('');
     const s = loadSampleModel();
     setModelMeta(s.metadata);
     setRawElements(s.elements);
     setSelectedElementTag('#16');
+    setAuditMemo('');
+    setBenchmarkResult(
+      new AnomalyBenchmarkLab().runComprehensiveBenchmark(s.elements as any, benchDatasetChoice, benchCorruptionRate)
+    );
   };
 
   // Run Benchmark
   const handleRunBenchmark = () => {
     const lab = new AnomalyBenchmarkLab();
-    const res = lab.runMultiModelBenchmark(enrichedElements, benchCorruptionRate);
+    const res = lab.runComprehensiveBenchmark(enrichedElements, benchDatasetChoice, benchCorruptionRate);
     setBenchmarkResult(res);
   };
+
+  // Selected element for Deep Learning feature attribution inspection
+  const selectedDeepElement = useMemo(() => {
+    if (!benchmarkResult.deep_element_predictions || benchmarkResult.deep_element_predictions.length === 0) {
+      return null;
+    }
+    if (selectedDeepElementTag) {
+      const found = benchmarkResult.deep_element_predictions.find((p) => p.tag === selectedDeepElementTag);
+      if (found) return found;
+    }
+    // Default to the element with highest reconstruction loss
+    return [...benchmarkResult.deep_element_predictions].sort((a, b) => b.reconstruction_loss - a.reconstruction_loss)[0];
+  }, [benchmarkResult, selectedDeepElementTag]);
 
   // Generate Executive Memo
   const handleGenerateMemo = async () => {
@@ -281,30 +348,32 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="flex min-h-screen bg-[#F8FAFC]">
+    <div className={`flex min-h-screen ${isDarkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-[#F8FAFC] text-slate-900'} transition-colors duration-150`}>
       {/* ---------------- SIDEBAR CONTROLS ---------------- */}
-      <aside className="w-80 bg-white border-r border-slate-200 flex flex-col shrink-0 shadow-sm">
+      <aside className="w-80 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col shrink-0 shadow-sm transition-colors duration-150">
         {/* Brand Header */}
-        <div className="p-5 border-b border-slate-100 flex items-center gap-3 bg-gradient-to-r from-slate-900 to-slate-800 text-white">
-          <div className="w-10 h-10 rounded-lg bg-orange-500/20 border border-orange-500/40 flex items-center justify-center text-xl shrink-0">
-            🏗️
-          </div>
-          <div>
-            <h1 className="font-bold text-base tracking-tight leading-tight">OpenBIM Control Deck</h1>
-            <p className="text-[11px] text-slate-300 font-medium">Enterprise Quantity & Cost Intelligence</p>
+        <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-gradient-to-r from-slate-900 via-slate-850 to-slate-800 text-white">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-orange-500/20 border border-orange-500/40 flex items-center justify-center text-xl shrink-0">
+              🏗️
+            </div>
+            <div>
+              <h1 className="font-bold text-base tracking-tight leading-tight text-white">OpenBIM Control Deck</h1>
+              <p className="text-[11px] text-slate-300 font-medium">Enterprise Quantity & Cost Intelligence</p>
+            </div>
           </div>
         </div>
 
         <div className="p-5 overflow-y-auto space-y-6 flex-1 text-xs">
           {/* 1. BIM Model Ingestion */}
           <div>
-            <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5 text-indigo-600" />
+            <h3 className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
               1. BIM Model Ingestion
             </h3>
 
             <div className="space-y-2 mt-2">
-              <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors">
+              <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 transition-colors">
                 <input
                   type="radio"
                   name="modelSource"
@@ -312,10 +381,10 @@ export const App: React.FC = () => {
                   onChange={handleLoadSample}
                   className="text-indigo-600 focus:ring-indigo-500"
                 />
-                <span className="font-medium text-slate-700">⚡ Pre-loaded Commercial Framing Model</span>
+                <span className="font-medium text-slate-700 dark:text-slate-200">⚡ Pre-loaded Commercial Framing Model</span>
               </label>
 
-              <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 transition-colors">
+              <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-750 transition-colors">
                 <input
                   type="radio"
                   name="modelSource"
@@ -323,12 +392,12 @@ export const App: React.FC = () => {
                   onChange={() => setModelSource('custom')}
                   className="text-indigo-600 focus:ring-indigo-500"
                 />
-                <span className="font-medium text-slate-700">📁 Upload Custom IFC File</span>
+                <span className="font-medium text-slate-700 dark:text-slate-200">📁 Upload Custom IFC File</span>
               </label>
             </div>
 
             {modelSource === 'sample' ? (
-              <div className="mt-2 p-2.5 rounded-lg bg-indigo-50 border border-indigo-100 text-[11px] text-indigo-900 leading-relaxed">
+              <div className="mt-2 p-2.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-800 text-[11px] text-indigo-900 dark:text-indigo-200 leading-relaxed">
                 Loaded <b>Commercial Complex - Block B (G+2 Framing)</b> with 163 structural members and engineered cost dispute anomalies.
               </div>
             ) : (
@@ -337,29 +406,32 @@ export const App: React.FC = () => {
                   type="file"
                   accept=".ifc,.ifczip"
                   onChange={handleFileUpload}
-                  className="block w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+                  className="block w-full text-xs text-slate-500 dark:text-slate-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 dark:file:bg-indigo-950/60 file:text-indigo-700 dark:file:text-indigo-300 hover:file:bg-indigo-100 dark:hover:file:bg-indigo-900 cursor-pointer"
                 />
-                {customIfcName && (
-                  <p className="mt-1 text-[11px] text-emerald-600 font-medium">✓ Uploaded: {customIfcName}</p>
+                {customIfcName && !uploadError && (
+                  <p className="mt-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">✓ Uploaded: {customIfcName}</p>
+                )}
+                {uploadError && (
+                  <p className="mt-1 text-[11px] text-red-600 dark:text-red-400 font-medium">{uploadError}</p>
                 )}
               </div>
             )}
           </div>
 
-          <hr className="border-slate-200" />
+          <hr className="border-slate-200 dark:border-slate-800" />
 
           {/* 2. Schedule of Rates */}
           <div>
-            <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
+            <h3 className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <DollarSign className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
               2. Schedule of Rates (SOR)
             </h3>
 
-            <label className="block text-slate-600 text-[11px] mb-1">Select Rate Schedule:</label>
+            <label className="block text-slate-600 dark:text-slate-400 text-[11px] mb-1">Select Rate Schedule:</label>
             <select
               value={activePreset}
               onChange={(e) => handlePresetChange(e.target.value)}
-              className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-xs font-medium text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
             >
               {Object.keys(RATE_SCHEDULE_PRESETS).map((k) => (
                 <option key={k} value={k}>
@@ -367,14 +439,14 @@ export const App: React.FC = () => {
                 </option>
               ))}
             </select>
-            <p className="text-[10px] text-slate-500 mt-1 italic">
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 italic">
               ℹ️ {RATE_SCHEDULE_PRESETS[activePreset]?.description}
             </p>
 
             <div className="mt-3">
-              <div className="flex justify-between text-slate-600 mb-1">
+              <div className="flex justify-between text-slate-600 dark:text-slate-400 mb-1">
                 <span>Fine-Tune Rate Index (%):</span>
-                <span className="font-bold text-slate-800">{rateMultiplierPct}%</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">{rateMultiplierPct}%</span>
               </div>
               <input
                 type="range"
@@ -384,7 +456,7 @@ export const App: React.FC = () => {
                 onChange={(e) => setRateMultiplierPct(Number(e.target.value))}
                 className="w-full accent-indigo-600 cursor-pointer"
               />
-              <div className="flex justify-between text-[10px] text-slate-400">
+              <div className="flex justify-between text-[10px] text-slate-400 dark:text-slate-500">
                 <span>70%</span>
                 <span>100% (DSR 2023)</span>
                 <span>150%</span>
@@ -392,19 +464,19 @@ export const App: React.FC = () => {
             </div>
           </div>
 
-          <hr className="border-slate-200" />
+          <hr className="border-slate-200 dark:border-slate-800" />
 
           {/* 3. AI Anomaly Parameters */}
           <div>
-            <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <h3 className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider mb-2 flex items-center gap-1.5">
               <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
               3. AI Anomaly Parameters
             </h3>
 
             <div className="mb-3">
-              <div className="flex justify-between text-slate-600 mb-1">
+              <div className="flex justify-between text-slate-600 dark:text-slate-400 mb-1">
                 <span>Z-Score Outlier Threshold:</span>
-                <span className="font-bold text-slate-800">{zScoreThresh.toFixed(1)}σ</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">{zScoreThresh.toFixed(1)}σ</span>
               </div>
               <input
                 type="range"
@@ -418,9 +490,9 @@ export const App: React.FC = () => {
             </div>
 
             <div>
-              <div className="flex justify-between text-slate-600 mb-1">
+              <div className="flex justify-between text-slate-600 dark:text-slate-400 mb-1">
                 <span>Isolation Forest Sensitivity:</span>
-                <span className="font-bold text-slate-800">{(isoContamination * 100).toFixed(0)}%</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200">{(isoContamination * 100).toFixed(0)}%</span>
               </div>
               <input
                 type="range"
@@ -434,31 +506,31 @@ export const App: React.FC = () => {
             </div>
           </div>
 
-          <hr className="border-slate-200" />
+          <hr className="border-slate-200 dark:border-slate-800" />
 
           {/* 4. Gemini GenAI Copilot */}
           <div>
-            <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <Bot className="w-3.5 h-3.5 text-indigo-500" />
+            <h3 className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <Bot className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
               4. 🤖 Gemini GenAI Copilot
             </h3>
 
-            <label className="block text-slate-600 text-[11px] mb-1">Gemini API Key:</label>
+            <label className="block text-slate-600 dark:text-slate-400 text-[11px] mb-1">Gemini API Key:</label>
             <input
               type="password"
               placeholder="Paste GEMINI_API_KEY..."
               value={geminiApiKey}
               onChange={(e) => setGeminiApiKey(e.target.value)}
-              className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
             <div className="mt-2">
               {geminiApiKey.trim() ? (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                   Gemini Live Generative Mode
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
                   ⚪ Calibrated Engineering Mode (Add key for live AI)
                 </span>
               )}
@@ -469,6 +541,44 @@ export const App: React.FC = () => {
 
       {/* ---------------- MAIN CONTENT AREA ---------------- */}
       <main className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+        {/* TOP STATUS BAR & THEME SWITCHER */}
+        <div className="flex items-center justify-between pb-1">
+          <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold text-[11px] border border-emerald-300 dark:border-emerald-800">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              CPWD DSR 2023 & IS-456 Ground-Truth Verified
+            </span>
+            <span className="hidden sm:inline">•</span>
+            <span className="hidden sm:inline font-medium">BIM Schema: {modelMeta.schema}</span>
+          </div>
+
+          {/* Theme Switcher Toggle */}
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700 text-xs">
+            <button
+              onClick={() => setIsDarkMode(false)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-semibold transition-all ${
+                !isDarkMode
+                  ? 'bg-white text-indigo-900 shadow-xs border border-slate-200'
+                  : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+              }`}
+            >
+              <Sun className="w-3.5 h-3.5 text-amber-500" />
+              <span>Light</span>
+            </button>
+            <button
+              onClick={() => setIsDarkMode(true)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-semibold transition-all ${
+                isDarkMode
+                  ? 'bg-slate-700 text-white shadow-xs border border-slate-600'
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <Moon className="w-3.5 h-3.5 text-sky-400" />
+              <span>Dark</span>
+            </button>
+          </div>
+        </div>
+
         {/* HERO BANNER */}
         <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-[#0B192C] via-[#1E3E62] to-[#001F3F] text-white p-5 shadow-lg border-l-6 border-[#FF6500]">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
@@ -487,7 +597,7 @@ export const App: React.FC = () => {
                 <span>Members: <b className="text-white">{auditedElements.length}</b></span>
               </p>
             </div>
-            <div className="shrink-0">
+            <div className="shrink-0 flex items-center gap-2">
               <span className="inline-block bg-[#FF6500] text-white text-[10px] font-extrabold uppercase px-3 py-1 rounded-full tracking-wider shadow">
                 CPWD DSR 2023 COMPLIANT
               </span>
@@ -497,7 +607,7 @@ export const App: React.FC = () => {
           <div className="mt-3.5 bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg p-2.5 text-xs text-slate-100 flex items-start gap-2">
             <span className="text-amber-400 font-bold shrink-0">⚡ Automated Takeoff & Risk Verification:</span>
             <span>
-              Ingests architectural and structural IFC models, extracts volumetric property sets, applies CPWD/DSR Schedule of Rates, and runs multivariate Isolation Forest anomaly detection to catch design-to-billing discrepancies in real-time.
+              Ingests architectural and structural IFC models, extracts volumetric property sets, applies CPWD/DSR Schedule of Rates, and runs Deep Learning Neural Autoencoders + multivariate Isolation Forest anomaly detection to catch design-to-billing discrepancies in real-time.
             </span>
           </div>
         </div>
@@ -505,90 +615,91 @@ export const App: React.FC = () => {
         {/* EXECUTIVE KPI RIBBON */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {/* Card 1 */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs border-t-4 border-t-[#1E3E62]">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Structural Members</div>
-            <div className="text-2xl font-extrabold text-slate-800 mt-1">{kpis.total_elements}</div>
-            <div className="text-[11px] text-slate-500 mt-0.5">{allStoreys.length} Building Levels</div>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs border-t-4 border-t-[#1E3E62] dark:border-t-sky-500 transition-colors">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Structural Members</div>
+            <div className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1">{kpis.total_elements}</div>
+            <div className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">{allStoreys.length} Building Levels</div>
           </div>
 
           {/* Card 2 */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs border-t-4 border-t-[#1E3E62]">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Concrete Volume</div>
-            <div className="text-2xl font-extrabold text-slate-800 mt-1">
-              {kpis.total_concrete_cum.toFixed(1)} <span className="text-xs font-normal text-slate-500">m³</span>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs border-t-4 border-t-[#1E3E62] dark:border-t-sky-500 transition-colors">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Concrete Volume</div>
+            <div className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1">
+              {kpis.total_concrete_cum.toFixed(1)} <span className="text-xs font-normal text-slate-500 dark:text-slate-400">m³</span>
             </div>
-            <div className="text-[11px] text-slate-500 mt-0.5">
+            <div className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
               ₹{(kpis.concrete_cost_inr / 100000).toFixed(1)}L Concrete Cost
             </div>
           </div>
 
           {/* Card 3 */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs border-t-4 border-t-[#1E3E62]">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Reinforcement Steel</div>
-            <div className="text-2xl font-extrabold text-slate-800 mt-1">
-              {kpis.total_steel_tonne.toFixed(1)} <span className="text-xs font-normal text-slate-500">MT</span>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs border-t-4 border-t-[#1E3E62] dark:border-t-sky-500 transition-colors">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Reinforcement Steel</div>
+            <div className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1">
+              {kpis.total_steel_tonne.toFixed(1)} <span className="text-xs font-normal text-slate-500 dark:text-slate-400">MT</span>
             </div>
-            <div className="text-[11px] text-slate-500 mt-0.5">Avg {kpis.rebar_density_overall} kg/m³ Density</div>
+            <div className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">Avg {kpis.rebar_density_overall} kg/m³ Density</div>
           </div>
 
           {/* Card 4 */}
-          <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs border-t-4 border-t-[#1E3E62]">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Project BOQ</div>
-            <div className="text-2xl font-extrabold text-slate-800 mt-1">
-              ₹{kpis.total_cost_lakhs.toFixed(2)} <span className="text-xs font-normal text-slate-500">Lakhs</span>
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs border-t-4 border-t-[#1E3E62] dark:border-t-sky-500 transition-colors">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Total Project BOQ</div>
+            <div className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1">
+              ₹{kpis.total_cost_lakhs.toFixed(2)} <span className="text-xs font-normal text-slate-500 dark:text-slate-400">Lakhs</span>
             </div>
-            <div className="text-[11px] text-slate-500 mt-0.5">₹{kpis.total_cost_crores.toFixed(3)} Cr Structural Cost</div>
+            <div className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">₹{kpis.total_cost_crores.toFixed(3)} Cr Structural Cost</div>
           </div>
 
           {/* Card 5 (Alert) */}
           <div
-            className={`rounded-xl p-3.5 shadow-xs border-t-4 ${
+            className={`rounded-xl p-3.5 shadow-xs border-t-4 transition-colors ${
               auditSummary.high_risk_count > 0
-                ? 'bg-red-50/80 border border-red-200 border-t-red-500'
-                : 'bg-emerald-50/80 border border-emerald-200 border-t-emerald-500'
+                ? 'bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 border-t-red-500'
+                : 'bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 border-t-emerald-500'
             }`}
           >
             <div
               className={`text-[10px] font-bold uppercase tracking-wider ${
-                auditSummary.high_risk_count > 0 ? 'text-red-600' : 'text-emerald-700'
+                auditSummary.high_risk_count > 0 ? 'text-red-700 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400'
               }`}
             >
               Cost Dispute Risk
             </div>
             <div
               className={`text-2xl font-extrabold mt-1 ${
-                auditSummary.high_risk_count > 0 ? 'text-red-700' : 'text-emerald-800'
+                auditSummary.high_risk_count > 0 ? 'text-red-700 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400'
               }`}
             >
               {auditSummary.high_risk_count} <span className="text-xs font-normal">High-Risk</span>
             </div>
-            <div className={`text-[11px] mt-0.5 ${auditSummary.high_risk_count > 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+            <div className={`text-[11px] mt-0.5 ${auditSummary.high_risk_count > 0 ? 'text-red-600 dark:text-red-300' : 'text-emerald-600 dark:text-emerald-300'}`}>
               ₹{auditSummary.at_risk_cost_lakhs.toFixed(2)} Lakhs At-Risk
             </div>
           </div>
         </div>
 
-        {/* ---------------- 8 OPERATIONAL MODULE TABS ---------------- */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+        {/* ---------------- 9 OPERATIONAL MODULE TABS ---------------- */}
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden transition-colors">
           {/* Tab Navigation Ribbon */}
-          <div className="flex border-b border-slate-200 overflow-x-auto bg-slate-50/70 p-1 gap-1 text-xs font-medium">
+          <div className="flex border-b border-slate-200 dark:border-slate-800 overflow-x-auto bg-slate-50/70 dark:bg-slate-850 p-1 gap-1 text-xs font-medium">
             {[
               { label: '🏗️ 3D Model Explorer', id: 0 },
               { label: '📋 Automated BOQ', id: 1 },
               { label: '🔍 AI Anomaly Audit', id: 2 },
               { label: '🤖 GenAI Copilot', id: 3 },
               { label: '📊 Cost Analytics', id: 4 },
-              { label: '🧪 Benchmark Lab', id: 5 },
-              { label: '💰 Schedule of Rates', id: 6 },
-              { label: '📥 Export Center', id: 7 },
+              { label: '🧪 Benchmark & Deep Learning Lab', id: 5 },
+              { label: '👁️ L&T Vision AI & Digital Twin', id: 6 },
+              { label: '💰 Schedule of Rates', id: 7 },
+              { label: '📥 Export Center', id: 8 },
             ].map((t) => (
               <button
                 key={t.id}
                 onClick={() => setActiveTab(t.id)}
                 className={`px-3 py-2 rounded-lg font-semibold whitespace-nowrap transition-all ${
                   activeTab === t.id
-                    ? 'bg-white text-indigo-900 shadow-xs border border-slate-200'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    ? 'bg-white dark:bg-slate-800 text-indigo-900 dark:text-sky-300 shadow-xs border border-slate-200 dark:border-slate-700'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60'
                 }`}
               >
                 {t.label}
@@ -600,22 +711,22 @@ export const App: React.FC = () => {
           {activeTab === 0 && (
             <div className="p-5 space-y-4">
               <div>
-                <h2 className="text-base font-bold text-slate-800">
+                <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
                   Interactive 3D BIM Structural Viewer & Spatial Takeoff
                 </h2>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   Rotate, pan, and zoom to inspect structural members in true 3D space. Click any element to view live takeoff parameters and TreeSHAP diagnostics.
                 </p>
               </div>
 
               {/* 3D Filter Bar */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-50 dark:bg-slate-850 p-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs">
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">Color Code 3D Elements By:</label>
+                  <label className="block text-slate-600 dark:text-slate-300 font-medium mb-1">Color Code 3D Elements By:</label>
                   <select
                     value={colorMode}
                     onChange={(e) => setColorMode(e.target.value as any)}
-                    className="w-full bg-white border border-slate-300 rounded p-1.5 text-xs font-medium"
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded p-1.5 text-xs font-medium text-slate-800 dark:text-slate-200"
                   >
                     <option value="risk_level">🚨 Risk Level (Anomalies in Red)</option>
                     <option value="ifc_type">🧱 Structural Element Class</option>
@@ -624,33 +735,33 @@ export const App: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">Storey Level Filter:</label>
+                  <label className="block text-slate-600 dark:text-slate-300 font-medium mb-1">Storey Level Filter:</label>
                   <select
-                    className="w-full bg-white border border-slate-300 rounded p-1.5 text-xs"
                     value={selectedStoreys.length === allStoreys.length ? 'ALL' : selectedStoreys[0] || 'ALL'}
                     onChange={(e) => {
-                      if (e.target.value === 'ALL') setSelectedStoreys(allStoreys);
-                      else setSelectedStoreys([e.target.value]);
+                      const v = e.target.value;
+                      setSelectedStoreys(v === 'ALL' ? allStoreys : [v]);
                     }}
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded p-1.5 text-xs font-medium text-slate-800 dark:text-slate-200"
                   >
                     <option value="ALL">All Levels ({allStoreys.length})</option>
-                    {allStoreys.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
+                    {allStoreys.map((st) => (
+                      <option key={st} value={st}>
+                        {st}
                       </option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">Class Filter:</label>
+                  <label className="block text-slate-600 dark:text-slate-300 font-medium mb-1">Structural Element Class:</label>
                   <select
-                    className="w-full bg-white border border-slate-300 rounded p-1.5 text-xs"
                     value={selectedTypes.length === allTypes.length ? 'ALL' : selectedTypes[0] || 'ALL'}
                     onChange={(e) => {
-                      if (e.target.value === 'ALL') setSelectedTypes(allTypes);
-                      else setSelectedTypes([e.target.value]);
+                      const v = e.target.value;
+                      setSelectedTypes(v === 'ALL' ? allTypes : [v]);
                     }}
+                    className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded p-1.5 text-xs font-medium text-slate-800 dark:text-slate-200"
                   >
                     <option value="ALL">All Classes ({allTypes.length})</option>
                     {allTypes.map((t) => (
@@ -661,173 +772,151 @@ export const App: React.FC = () => {
                   </select>
                 </div>
 
-                <div className="flex items-center gap-2 pt-4">
-                  <input
-                    type="checkbox"
-                    id="wf-check"
-                    checked={showWireframes}
-                    onChange={(e) => setShowWireframes(e.target.checked)}
-                    className="rounded text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <label htmlFor="wf-check" className="text-slate-700 font-medium cursor-pointer">
-                    Show Wireframe Box
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 cursor-pointer p-1.5 text-slate-700 dark:text-slate-200 font-medium">
+                    <input
+                      type="checkbox"
+                      checked={showWireframes}
+                      onChange={(e) => setShowWireframes(e.target.checked)}
+                      className="rounded text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>Show Wireframe Boxes</span>
                   </label>
                 </div>
               </div>
 
-              {/* 3D Model WebGL Canvas */}
+              {/* Three.js 3D Viewer Canvas */}
               <ThreeBimViewer
                 elements={auditedElements}
                 colorBy={colorMode}
                 selectedStoreys={selectedStoreys}
                 selectedTypes={selectedTypes}
                 showBoundingBoxes={showWireframes}
-                onSelectElement={(el) => setSelectedElementTag(el.tag)}
+                onSelectElement={(el) => {
+                  setSelectedElementTag(el.tag);
+                  setIsInspectorExpanded(true);
+                }}
                 selectedElementTag={selectedElementTag}
+                isDarkMode={isDarkMode}
               />
 
-              {/* Interactive Element Inspector & Explainable AI */}
-              <div className="border border-slate-200 rounded-xl overflow-hidden bg-white shadow-xs">
+              {/* Interactive Element Inspector */}
+              <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50 dark:bg-slate-850">
                 <button
                   onClick={() => setIsInspectorExpanded(!isInspectorExpanded)}
-                  className="w-full px-4 py-3 bg-slate-50 hover:bg-slate-100 flex justify-between items-center text-xs font-bold text-slate-800 transition-colors border-b border-slate-200"
+                  className="w-full p-3.5 flex justify-between items-center text-left font-bold text-slate-800 dark:text-slate-200 text-xs bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/70 dark:hover:bg-slate-750 transition-colors"
                 >
-                  <span className="flex items-center gap-2">
-                    <Search className="w-4 h-4 text-indigo-600" />
-                    Interactive Element Inspector & Explainable AI (TreeSHAP)
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <Search className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                    <span>
+                      🔍 Interactive Element Inspector: <b className="text-indigo-700 dark:text-sky-300">{selectedElement.name}</b> ({selectedElement.tag})
+                    </span>
+                  </div>
                   {isInspectorExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </button>
 
-                {isInspectorExpanded && selectedElement && (
-                  <div className="p-4 space-y-4 text-xs">
+                {isInspectorExpanded && (
+                  <div className="p-4 space-y-4 bg-white dark:bg-slate-900 text-xs">
+                    {/* Element Selector Dropdown */}
                     <div>
-                      <label className="block text-slate-600 font-medium mb-1">Select Element to Inspect:</label>
+                      <label className="block text-slate-600 dark:text-slate-400 font-medium mb-1">Select Member to Inspect:</label>
                       <select
-                        value={selectedElement.tag}
+                        value={selectedElementTag}
                         onChange={(e) => setSelectedElementTag(e.target.value)}
-                        className="w-full bg-white border border-slate-300 rounded-lg p-2 font-medium text-slate-800 text-xs"
+                        className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg p-2 font-mono text-xs text-slate-800 dark:text-slate-200"
                       >
                         {auditedElements.map((el) => (
                           <option key={el.tag} value={el.tag}>
-                            {el.tag} | {el.name} ({el.ifc_type.replace('Ifc', '')} on {el.storey}) - Risk: {el.risk_level}
+                            {el.tag} | {el.name} ({el.ifc_type.replace('Ifc', '')} - {el.storey}) [Risk: {el.risk_level}]
                           </option>
                         ))}
                       </select>
                     </div>
 
-                    {/* Member Quick Stats */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase">Element Name</div>
-                        <div className="text-sm font-bold text-slate-800 truncate">{selectedElement.name}</div>
+                    {/* Metadata Grid */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                        <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold">IFC Class</div>
+                        <div className="text-sm font-bold text-slate-800 dark:text-slate-100">{selectedElement.ifc_type.replace('Ifc', '')}</div>
                       </div>
-                      <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase">IFC Class</div>
-                        <div className="text-sm font-bold text-slate-800">{selectedElement.ifc_type.replace('Ifc', '')}</div>
+                      <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                        <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold">Storey Level</div>
+                        <div className="text-sm font-bold text-slate-800 dark:text-slate-100">{selectedElement.storey}</div>
                       </div>
-                      <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase">Storey Level</div>
-                        <div className="text-sm font-bold text-slate-800">{selectedElement.storey}</div>
+                      <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                        <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold">Concrete Grade</div>
+                        <div className="text-sm font-bold text-emerald-700 dark:text-emerald-400">{selectedElement.concrete_grade}</div>
                       </div>
-                      <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase">Concrete Grade</div>
-                        <div className="text-sm font-bold text-emerald-600">{selectedElement.concrete_grade}</div>
-                      </div>
-
-                      <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase">Net Volume</div>
-                        <div className="text-sm font-bold text-slate-800">{selectedElement.concrete_vol_cum.toFixed(3)} m³</div>
-                      </div>
-                      <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase">Estimated Steel</div>
-                        <div className="text-sm font-bold text-slate-800">{selectedElement.rebar_kg.toFixed(1)} kg</div>
-                      </div>
-                      <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase">Formwork Area</div>
-                        <div className="text-sm font-bold text-slate-800">{selectedElement.formwork_sqm.toFixed(2)} m²</div>
-                      </div>
-                      <div className="p-2.5 rounded bg-slate-50 border border-slate-200">
-                        <div className="text-[10px] text-slate-400 font-bold uppercase">Total Cost</div>
-                        <div className="text-sm font-bold text-amber-600">₹{selectedElement.total_cost_inr.toLocaleString()}</div>
+                      <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                        <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold">Total Element Cost</div>
+                        <div className="text-sm font-bold text-slate-900 dark:text-white">₹{selectedElement.total_cost_inr.toLocaleString()}</div>
                       </div>
                     </div>
 
-                    {/* Stratified Residuals Breakdown */}
-                    <div>
-                      <h4 className="font-bold text-slate-800 mb-1.5">
-                        Stratified Physical Model Residuals (Conditioned by Member Class)
-                      </h4>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                        <div className="p-2 rounded bg-indigo-50/60 border border-indigo-100">
-                          <div className="text-[10px] text-indigo-700 font-semibold">Expected Formwork</div>
-                          <div className="text-xs font-bold text-indigo-900">{selectedElement.formwork_expected_sqm.toFixed(2)} m²</div>
-                        </div>
-                        <div className="p-2 rounded bg-indigo-50/60 border border-indigo-100">
-                          <div className="text-[10px] text-indigo-700 font-semibold">Formwork Residual Z</div>
-                          <div className="text-xs font-bold text-indigo-900">
-                            {selectedElement.formwork_studentized_residual > 0 ? '+' : ''}
-                            {selectedElement.formwork_studentized_residual.toFixed(2)} σ
-                          </div>
-                        </div>
-                        <div className="p-2 rounded bg-indigo-50/60 border border-indigo-100">
-                          <div className="text-[10px] text-indigo-700 font-semibold">Expected Steel</div>
-                          <div className="text-xs font-bold text-indigo-900">{selectedElement.rebar_expected_kg.toFixed(1)} kg</div>
-                        </div>
-                        <div className="p-2 rounded bg-indigo-50/60 border border-indigo-100">
-                          <div className="text-[10px] text-indigo-700 font-semibold">Steel Residual Z</div>
-                          <div className="text-xs font-bold text-indigo-900">
-                            {selectedElement.rebar_studentized_residual > 0 ? '+' : ''}
-                            {selectedElement.rebar_studentized_residual.toFixed(2)} σ
-                          </div>
-                        </div>
+                    {/* Quantities Grid */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="p-2.5 rounded-lg bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900">
+                        <div className="text-[10px] uppercase text-indigo-700 dark:text-indigo-300 font-semibold">Net Concrete Volume</div>
+                        <div className="text-base font-extrabold text-indigo-950 dark:text-indigo-200">{selectedElement.concrete_vol_cum.toFixed(3)} m³</div>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900">
+                        <div className="text-[10px] uppercase text-indigo-700 dark:text-indigo-300 font-semibold">Estimated Rebar</div>
+                        <div className="text-base font-extrabold text-indigo-950 dark:text-indigo-200">{selectedElement.rebar_kg.toFixed(1)} kg</div>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900">
+                        <div className="text-[10px] uppercase text-indigo-700 dark:text-indigo-300 font-semibold">Formwork Contact Area</div>
+                        <div className="text-base font-extrabold text-indigo-950 dark:text-indigo-200">{selectedElement.formwork_sqm.toFixed(2)} m²</div>
                       </div>
                     </div>
 
-                    {/* Anomaly Diagnosis Banner */}
+                    {/* Risk Diagnosis Banner */}
                     {selectedElement.risk_level !== 'NORMAL' ? (
-                      <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-900 space-y-1">
-                        <div className="font-bold text-xs flex items-center gap-1.5">
-                          <AlertTriangle className="w-4 h-4 text-red-600" />
-                          Anomaly Audit Flag ({selectedElement.risk_level}): {selectedElement.anomaly_reasons}
+                      <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-900 dark:text-red-200 space-y-1">
+                        <div className="font-bold flex items-center gap-1.5 text-xs">
+                          <AlertTriangle className="w-4 h-4 text-red-600 dark:text-red-400" />
+                          <span>AI Diagnosis ({selectedElement.risk_level} Risk): {selectedElement.anomaly_reasons}</span>
                         </div>
-                        <div className="text-[11px] text-red-800">
-                          <b>Recommended Action:</b> {selectedElement.recommended_action}
+                        <div className="text-[11px] text-red-700 dark:text-red-300">
+                          <b>Recommended Engineering Action:</b> {selectedElement.recommended_action}
                         </div>
                       </div>
                     ) : (
-                      <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 font-semibold flex items-center gap-1.5 text-xs">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        Conforms to peer storey volume distributions and CPWD physical norms.
+                      <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        <span>Compliant: Member dimensions and reinforcement consumption fall within standard design norms.</span>
                       </div>
                     )}
 
-                    {/* TreeSHAP Waterfall Diagnostics */}
+                    {/* TreeSHAP Feature Attribution Waterfall */}
                     {shapExplanation && (
-                      <div className="pt-2">
-                        <h4 className="font-bold text-slate-800 mb-1 flex items-center gap-1.5">
-                          <BarChart3 className="w-4 h-4 text-indigo-600" />
-                          TreeSHAP Local Feature Attribution
+                      <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                        <h4 className="font-bold text-slate-800 dark:text-slate-200 text-xs flex items-center gap-1.5">
+                          <BrainCircuit className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                          TreeSHAP Local Feature Attribution (Explainable AI)
                         </h4>
-                        <p className="text-[11px] text-slate-500 mb-2">
-                          Decomposition from cohort expectation E[f(x)] ({shapExplanation.expected_value.toFixed(3)}) to member anomaly score ({shapExplanation.predicted_score.toFixed(3)}). Features shifting the score negative push it into the anomaly zone.
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Identifies which exact geometric features pushed this member into anomalous risk vs normalized peer baseline.
                         </p>
 
-                        <div className="space-y-1.5 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                          {shapExplanation.feature_contributions.map((c, i) => (
-                            <div key={i} className="flex items-center justify-between py-1 border-b border-slate-100 last:border-0">
-                              <span className="font-medium text-slate-700">{c.feature}</span>
-                              <div className="flex items-center gap-2">
-                                <span className="text-slate-500">Val: {c.feature_value}</span>
-                                <span
-                                  className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                    c.shap_value < 0 ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
+                        <div className="space-y-1.5">
+                          {shapExplanation.feature_contributions.map((fc: any, i: number) => (
+                            <div key={i} className="flex items-center gap-3 text-[11px]">
+                              <span className="w-44 font-medium text-slate-700 dark:text-slate-300 truncate">{fc.feature}</span>
+                              <div className="flex-1 bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden relative">
+                                <div
+                                  className={`h-full rounded-full ${
+                                    fc.impact === 'Anomaly Inducer' ? 'bg-red-500' : 'bg-emerald-500'
                                   }`}
-                                >
-                                  {c.shap_value > 0 ? '+' : ''}
-                                  {c.shap_value.toFixed(3)} ({c.impact})
-                                </span>
+                                  style={{ width: `${Math.min(100, Math.abs(fc.shap_value) * 80)}%` }}
+                                />
                               </div>
+                              <span
+                                className={`w-28 text-right font-mono font-semibold ${
+                                  fc.impact === 'Anomaly Inducer' ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'
+                                }`}
+                              >
+                                {fc.shap_value > 0 ? `+${fc.shap_value.toFixed(3)}` : fc.shap_value.toFixed(3)}
+                              </span>
                             </div>
                           ))}
                         </div>
@@ -842,78 +931,85 @@ export const App: React.FC = () => {
           {/* TAB 1: AUTOMATED BILL OF QUANTITIES (BOQ) */}
           {activeTab === 1 && (
             <div className="p-5 space-y-4">
-              <div className="flex justify-between items-start">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
                 <div>
-                  <h2 className="text-base font-bold text-slate-800">
+                  <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
                     Abstract of Cost (CPWD DSR Standard Schedule of Quantities)
                   </h2>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     Aggregated quantities categorized by CPWD item codes, mix specifications, and Indian standard units.
                   </p>
                 </div>
-                <div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-slate-600 dark:text-slate-400 font-medium">Filter Work Category:</label>
                   <select
                     value={selectedCategory}
                     onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700"
+                    className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg p-1.5 text-xs font-medium text-slate-800 dark:text-slate-200"
                   >
-                    <option value="All Categories">All Categories</option>
-                    <option value="Concrete Works (RCC / PCC)">Concrete Works</option>
-                    <option value="Reinforcement Steel">Reinforcement Steel</option>
-                    <option value="Centering & Shuttering">Centering & Shuttering</option>
+                    {['All Categories', 'Concrete Work', 'Steel Reinforcement', 'Formwork'].map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
 
               {/* BOQ Data Table */}
-              <div className="overflow-x-auto border border-slate-200 rounded-lg">
+              <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 text-slate-600 font-bold border-b border-slate-200">
+                  <thead className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700">
                     <tr>
                       <th className="p-2.5">Item Code</th>
                       <th className="p-2.5">Category</th>
                       <th className="p-2.5">Description</th>
+                      <th className="p-2.5 text-center">Unit</th>
                       <th className="p-2.5 text-right">Quantity</th>
-                      <th className="p-2.5">Unit</th>
                       <th className="p-2.5 text-right">Rate (INR)</th>
                       <th className="p-2.5 text-right">Amount (INR)</th>
                       <th className="p-2.5 text-right">% Share</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {boqList
                       .filter((b) => selectedCategory === 'All Categories' || b.Category === selectedCategory)
-                      .map((b, i) => (
-                        <tr key={i} className="hover:bg-slate-50">
-                          <td className="p-2.5 font-mono font-semibold text-indigo-700">{b['Item Code']}</td>
-                          <td className="p-2.5 text-slate-700 font-medium">{b.Category}</td>
-                          <td className="p-2.5 text-slate-600 max-w-xs">{b.Description}</td>
-                          <td className="p-2.5 text-right font-medium">{b.Quantity.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                          <td className="p-2.5 font-medium text-slate-500">{b.Unit}</td>
-                          <td className="p-2.5 text-right font-medium">₹{b['Rate (INR)'].toLocaleString()}</td>
-                          <td className="p-2.5 text-right font-bold text-slate-900">₹{b['Amount (INR)'].toLocaleString()}</td>
-                          <td className="p-2.5 text-right font-semibold text-slate-600">{b['% Share'].toFixed(2)}%</td>
+                      .map((item, i) => (
+                        <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors">
+                          <td className="p-2.5 font-mono font-bold text-indigo-700 dark:text-sky-400">{item['Item Code']}</td>
+                          <td className="p-2.5 text-slate-700 dark:text-slate-300">{item.Category}</td>
+                          <td className="p-2.5 font-medium text-slate-900 dark:text-slate-100 max-w-xs truncate">{item.Description}</td>
+                          <td className="p-2.5 text-center font-semibold text-slate-600 dark:text-slate-400">{item.Unit}</td>
+                          <td className="p-2.5 text-right font-mono font-semibold text-slate-800 dark:text-slate-200">
+                            {item.Quantity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-2.5 text-right font-mono text-slate-600 dark:text-slate-300">
+                            ₹{item['Rate (INR)'].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-2.5 text-right font-mono font-bold text-slate-900 dark:text-white">
+                            ₹{item['Amount (INR)'].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-2.5 text-right font-mono font-semibold text-indigo-600 dark:text-sky-300">
+                            {item['% Share'].toFixed(2)}%
+                          </td>
                         </tr>
                       ))}
                   </tbody>
                 </table>
               </div>
 
-              {/* Category Breakdown Cards */}
+              {/* Sub-breakdown Summary Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
-                {['Concrete Works (RCC / PCC)', 'Reinforcement Steel', 'Centering & Shuttering'].map((cat) => {
-                  const subTotal = boqList
+                {['Concrete Work', 'Steel Reinforcement', 'Formwork'].map((cat) => {
+                  const catAmount = boqList
                     .filter((b) => b.Category === cat)
                     .reduce((sum, b) => sum + b['Amount (INR)'], 0);
-                  const share = kpis.total_cost_inr > 0 ? (subTotal / kpis.total_cost_inr) * 100 : 0;
+                  const share = kpis.total_cost_inr > 0 ? (catAmount / kpis.total_cost_inr) * 100 : 0;
                   return (
-                    <div key={cat} className="p-3 rounded-lg bg-slate-50 border border-slate-200">
-                      <div className="text-xs font-bold text-slate-700">{cat}</div>
-                      <div className="text-lg font-extrabold text-indigo-950 mt-1">₹{(subTotal / 100000).toFixed(2)} Lakhs</div>
-                      <div className="w-full bg-slate-200 h-1.5 rounded-full mt-2 overflow-hidden">
-                        <div className="bg-indigo-600 h-full rounded-full" style={{ width: `${Math.min(100, share)}%` }} />
-                      </div>
-                      <div className="text-[11px] text-slate-500 mt-1">{share.toFixed(1)}% of total project structural expenditure</div>
+                    <div key={cat} className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-850 space-y-1">
+                      <div className="font-bold text-slate-700 dark:text-slate-300 text-xs">{cat}</div>
+                      <div className="text-lg font-extrabold text-indigo-950 dark:text-sky-300">₹{(catAmount / 100000).toFixed(2)} Lakhs</div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">{share.toFixed(1)}% of total structural expenditure</div>
                     </div>
                   );
                 })}
@@ -925,214 +1021,239 @@ export const App: React.FC = () => {
           {activeTab === 2 && (
             <div className="p-5 space-y-4">
               <div>
-                <h2 className="text-base font-bold text-slate-800">
+                <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
                   AI Anomaly & Cost Dispute Diagnostic Center
                 </h2>
-                <p className="text-xs text-slate-500">
-                  Unsupervised Machine Learning (Isolation Forest), Stratified Physical Residuals, and Cohort Z-Score analysis identifying volumetric anomalies, corrupted Qto property sets, and contractor billing risks.
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Unsupervised Isolation Forest, Stratified Physical Residuals, and Cohort Z-Score analysis identifying volumetric anomalies, corrupted Qto property sets, and contractor billing risks.
                 </p>
               </div>
 
-              {/* Top 3 Summary Alert Banners */}
+              {/* 3 Status Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="p-3.5 rounded-lg bg-red-50 border-l-4 border-red-500 text-xs">
-                  <div className="font-extrabold text-sm text-red-700">🚨 High Risk: {auditSummary.high_risk_count} Elements</div>
-                  <div className="text-red-900 mt-0.5">Immediate BIM audit required; volume jumps exceed peer means.</div>
+                <div className="p-3.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 border-l-4 border-l-red-500">
+                  <div className="font-bold text-red-900 dark:text-red-300 text-sm">🚨 High Risk: {auditSummary.high_risk_count} Elements</div>
+                  <div className="text-[11px] text-red-700 dark:text-red-400 mt-0.5">Immediate BIM audit required; volume jumps exceed peer means.</div>
                 </div>
-
-                <div className="p-3.5 rounded-lg bg-amber-50 border-l-4 border-amber-500 text-xs">
-                  <div className="font-extrabold text-sm text-amber-700">⚠️ Medium Risk: {auditSummary.medium_risk_count} Elements</div>
-                  <div className="text-amber-900 mt-0.5">Unassigned concrete grades or missing base quantity sets.</div>
+                <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 border-l-4 border-l-amber-500">
+                  <div className="font-bold text-amber-900 dark:text-amber-300 text-sm">⚠️ Medium Risk: {auditSummary.medium_risk_count} Elements</div>
+                  <div className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">Unassigned concrete grades or missing base quantity sets.</div>
                 </div>
-
-                <div className="p-3.5 rounded-lg bg-emerald-50 border-l-4 border-emerald-500 text-xs">
-                  <div className="font-extrabold text-sm text-emerald-700">✅ Compliant: {auditSummary.normal_count} Elements</div>
-                  <div className="text-emerald-900 mt-0.5">Verified within standard statistical tolerances.</div>
+                <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 border-l-4 border-l-emerald-500">
+                  <div className="font-bold text-emerald-900 dark:text-emerald-300 text-sm">✅ Compliant: {auditSummary.normal_count} Elements</div>
+                  <div className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-0.5">Verified within standard statistical tolerances.</div>
                 </div>
               </div>
 
-              {/* Risk Filter Buttons */}
-              <div className="flex gap-2 text-xs">
-                {[
-                  { id: 'ALL_FLAGGED', label: 'All Flagged Anomalies (High & Medium)' },
-                  { id: 'HIGH_ONLY', label: 'High Risk Only' },
-                  { id: 'ALL', label: 'All Elements' },
-                ].map((rf) => (
-                  <button
-                    key={rf.id}
-                    onClick={() => setRiskFilter(rf.id as any)}
-                    className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
-                      riskFilter === rf.id
-                        ? 'bg-slate-900 text-white font-semibold'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                    }`}
-                  >
-                    {rf.label}
-                  </button>
-                ))}
+              {/* Filter Radio Controls */}
+              <div className="flex gap-4 items-center text-xs text-slate-700 dark:text-slate-300 pt-1">
+                <span className="font-semibold text-slate-800 dark:text-slate-200">Filter Table:</span>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="riskFilter"
+                    checked={riskFilter === 'ALL_FLAGGED'}
+                    onChange={() => setRiskFilter('ALL_FLAGGED')}
+                  />
+                  <span>All Flagged (High & Medium)</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="riskFilter"
+                    checked={riskFilter === 'HIGH_ONLY'}
+                    onChange={() => setRiskFilter('HIGH_ONLY')}
+                  />
+                  <span>High Risk Only</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="riskFilter"
+                    checked={riskFilter === 'ALL'}
+                    onChange={() => setRiskFilter('ALL')}
+                  />
+                  <span>All Elements ({auditedElements.length})</span>
+                </label>
               </div>
 
-              {/* Anomaly Audit Data Table */}
-              <div className="overflow-x-auto border border-slate-200 rounded-lg">
+              {/* Anomaly Data Table */}
+              <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 text-slate-600 font-bold border-b border-slate-200">
+                  <thead className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700">
                     <tr>
-                      <th className="p-2.5">Tag / Name</th>
+                      <th className="p-2.5">Tag</th>
+                      <th className="p-2.5">Name</th>
                       <th className="p-2.5">Class</th>
                       <th className="p-2.5">Storey</th>
                       <th className="p-2.5 text-right">Vol (m³)</th>
-                      <th className="p-2.5 text-right">Peer Mean</th>
                       <th className="p-2.5 text-right">Cohort Z</th>
                       <th className="p-2.5 text-right">FW Res (σ)</th>
+                      <th className="p-2.5 text-right">Rebar Res (σ)</th>
                       <th className="p-2.5 text-right">Cost (₹)</th>
                       <th className="p-2.5 text-center">Risk</th>
-                      <th className="p-2.5">AI Diagnosis</th>
+                      <th className="p-2.5">AI Diagnosis & Action</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {auditedElements
-                      .filter((el) => {
-                        if (riskFilter === 'HIGH_ONLY') return el.risk_level === 'HIGH';
-                        if (riskFilter === 'ALL_FLAGGED') return el.risk_level === 'HIGH' || el.risk_level === 'MEDIUM';
+                      .filter((e) => {
+                        if (riskFilter === 'HIGH_ONLY') return e.risk_level === 'HIGH';
+                        if (riskFilter === 'ALL_FLAGGED') return e.risk_level === 'HIGH' || e.risk_level === 'MEDIUM';
                         return true;
                       })
-                      .map((el, i) => (
+                      .map((el) => (
                         <tr
-                          key={i}
-                          className={`${
+                          key={el.tag}
+                          className={`hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors ${
                             el.risk_level === 'HIGH'
-                              ? 'bg-red-50/60 hover:bg-red-50'
+                              ? 'bg-red-50/70 dark:bg-red-950/30'
                               : el.risk_level === 'MEDIUM'
-                              ? 'bg-amber-50/50 hover:bg-amber-50'
-                              : 'hover:bg-slate-50'
+                              ? 'bg-amber-50/70 dark:bg-amber-950/30'
+                              : ''
                           }`}
                         >
-                          <td className="p-2.5 font-medium text-slate-900">
-                            <span className="font-mono text-indigo-700">{el.tag}</span> - {el.name}
+                          <td className="p-2.5 font-mono font-bold text-indigo-700 dark:text-sky-400">{el.tag}</td>
+                          <td className="p-2.5 font-medium text-slate-900 dark:text-slate-100">{el.name}</td>
+                          <td className="p-2.5 text-slate-600 dark:text-slate-400">{el.ifc_type.replace('Ifc', '')}</td>
+                          <td className="p-2.5 text-slate-600 dark:text-slate-400">{el.storey}</td>
+                          <td className="p-2.5 text-right font-mono font-bold text-slate-900 dark:text-white">{el.concrete_vol_cum.toFixed(2)}</td>
+                          <td
+                            className={`p-2.5 text-right font-mono font-semibold ${
+                              Math.abs(el.z_score_vol) > 2.0 ? 'text-red-600 dark:text-red-400' : 'text-slate-600 dark:text-slate-400'
+                            }`}
+                          >
+                            {el.z_score_vol > 0 ? `+${el.z_score_vol.toFixed(2)}` : el.z_score_vol.toFixed(2)}
                           </td>
-                          <td className="p-2.5 text-slate-600">{el.ifc_type.replace('Ifc', '')}</td>
-                          <td className="p-2.5 text-slate-600">{el.storey}</td>
-                          <td className="p-2.5 text-right font-medium">{el.concrete_vol_cum.toFixed(3)}</td>
-                          <td className="p-2.5 text-right text-slate-500">{el.cohort_mean_vol.toFixed(3)}</td>
-                          <td className="p-2.5 text-right font-bold text-slate-700">
-                            {el.z_score_vol > 0 ? '+' : ''}
-                            {el.z_score_vol.toFixed(1)}σ
+                          <td className="p-2.5 text-right font-mono text-slate-600 dark:text-slate-400">
+                            {el.formwork_studentized_residual.toFixed(2)}
                           </td>
-                          <td className="p-2.5 text-right text-slate-600">
-                            {el.formwork_studentized_residual > 0 ? '+' : ''}
-                            {el.formwork_studentized_residual.toFixed(1)}σ
+                          <td className="p-2.5 text-right font-mono text-slate-600 dark:text-slate-400">
+                            {el.rebar_studentized_residual.toFixed(2)}
                           </td>
-                          <td className="p-2.5 text-right font-semibold">₹{el.total_cost_inr.toLocaleString()}</td>
+                          <td className="p-2.5 text-right font-mono font-bold text-slate-900 dark:text-white">
+                            ₹{el.total_cost_inr.toLocaleString()}
+                          </td>
                           <td className="p-2.5 text-center">
                             <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                 el.risk_level === 'HIGH'
-                                  ? 'bg-red-100 text-red-800'
+                                  ? 'bg-red-100 dark:bg-red-900/60 text-red-800 dark:text-red-200'
                                   : el.risk_level === 'MEDIUM'
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-emerald-100 text-emerald-800'
+                                  ? 'bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200'
+                                  : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200'
                               }`}
                             >
                               {el.risk_level}
                             </span>
                           </td>
-                          <td className="p-2.5 text-slate-700 max-w-xs">{el.anomaly_reasons}</td>
+                          <td className="p-2.5 text-[11px] max-w-xs">
+                            <div className="font-semibold text-slate-800 dark:text-slate-200">{el.anomaly_reasons || 'Compliant'}</div>
+                            {el.recommended_action && (
+                              <div className="text-indigo-600 dark:text-sky-300 font-medium text-[10px] mt-0.5">{el.recommended_action}</div>
+                            )}
+                          </td>
                         </tr>
                       ))}
                   </tbody>
                 </table>
               </div>
 
-              {/* Global SHAP Feature Importance Table */}
-              <div className="pt-2">
+              {/* Global SHAP Feature Importance Expander */}
+              <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-slate-50 dark:bg-slate-850">
                 <button
                   onClick={() => setShowGlobalShap(!showGlobalShap)}
-                  className="text-indigo-600 hover:text-indigo-800 font-semibold text-xs flex items-center gap-1"
+                  className="w-full p-3.5 flex justify-between items-center text-left font-bold text-slate-800 dark:text-slate-200 text-xs bg-slate-100 dark:bg-slate-800 hover:bg-slate-200/70 dark:hover:bg-slate-750 transition-colors"
                 >
-                  <BarChart3 className="w-3.5 h-3.5" />
-                  {showGlobalShap ? 'Hide' : 'View'} Global TreeSHAP Feature Importance Across BIM Model
+                  <span className="flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                    Global SHAP Feature Importance (Model-Wide Sensitivity)
+                  </span>
+                  {showGlobalShap ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </button>
-
                 {showGlobalShap && (
-                  <div className="mt-2 border border-slate-200 rounded-lg p-3 bg-slate-50">
-                    <p className="text-[11px] text-slate-500 mb-2">
-                      Mean absolute SHAP impact of each dimensional feature on anomaly scores across the whole building framing.
+                  <div className="p-4 bg-white dark:bg-slate-900 space-y-2 text-xs">
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Mean absolute TreeSHAP impact across all 163 structural members indicating primary risk drivers.
                     </p>
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-200 text-slate-600 text-left">
-                          <th className="p-1.5">Rank</th>
-                          <th className="p-1.5">Feature</th>
-                          <th className="p-1.5 text-right">Mean |SHAP| Impact</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {globalShapList.map((g) => (
-                          <tr key={g.rank} className="border-b border-slate-100 last:border-0">
-                            <td className="p-1.5 font-bold text-slate-700">#{g.rank}</td>
-                            <td className="p-1.5 font-medium text-slate-800">{g.feature}</td>
-                            <td className="p-1.5 text-right font-mono font-bold text-indigo-700">{g.mean_abs_shap.toFixed(3)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <div className="space-y-1.5 pt-1">
+                      {globalShapImportance.map((imp: any, idx: number) => (
+                        <div key={idx} className="flex items-center gap-3">
+                          <span className="w-44 text-slate-700 dark:text-slate-300 font-medium truncate">{imp.feature}</span>
+                          <div className="flex-1 bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                            <div className="bg-indigo-600 dark:bg-sky-500 h-full rounded-full" style={{ width: `${imp.percentage}%` }} />
+                          </div>
+                          <span className="w-16 text-right font-mono font-bold text-slate-900 dark:text-white">{imp.percentage}%</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
             </div>
           )}
 
-          {/* TAB 3: GENAI AUDIT MEMO & COPILOT */}
+          {/* TAB 3: GENAI COPILOT & EXECUTIVE MEMO */}
           {activeTab === 3 && (
-            <div className="p-5 space-y-4">
+            <div className="p-5 space-y-5">
               <div>
-                <h2 className="text-base font-bold text-slate-800">
+                <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
                   🤖 GenAI Structural Cost Copilot & Live Audit Memorandum
                 </h2>
-                <p className="text-xs text-slate-500">
-                  Powered by Google Gemini (gemini-2.5-flash). Generates executive commercial audit memos and provides interactive conversational Q&A grounded in BIM model takeoffs.
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Powered by Google Gemini. Generates executive commercial audit memos and provides interactive conversational Q&A grounded in BIM model takeoffs.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {/* Left Column: Executive Audit Memo */}
+                {/* Left Column: Executive Memo */}
                 <div className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
-                      <FileText className="w-4 h-4 text-indigo-600" />
+                  <div>
+                    <h3 className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                      <FileText className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                       Executive Audit Memorandum
                     </h3>
-                    <button
-                      onClick={handleGenerateMemo}
-                      disabled={isGeneratingMemo}
-                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors disabled:opacity-50"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      {isGeneratingMemo ? 'Analyzing BIM...' : '⚡ Generate Memo'}
-                    </button>
-                  </div>
-
-                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 h-[440px] overflow-y-auto text-xs text-slate-800 leading-relaxed font-sans whitespace-pre-wrap shadow-inner">
-                    {auditMemo}
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Authoritative technical memorandum reviewing volumetric exposure, value engineering, and subcontractor dispute mitigation.
+                    </p>
                   </div>
 
                   <button
-                    onClick={handleDownloadMemoMd}
-                    className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg text-xs flex items-center justify-center gap-2 transition-colors"
+                    onClick={handleGenerateMemo}
+                    disabled={isGeneratingMemo}
+                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
                   >
-                    <Download className="w-3.5 h-3.5" />
-                    ⬇️ Download Audit Memo (.md)
+                    <Sparkles className="w-3.5 h-3.5" />
+                    {isGeneratingMemo ? 'Analyzing BIM Geometry & CPWD Rates...' : '⚡ Generate Executive Audit Memo'}
                   </button>
+
+                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3.5 max-h-[380px] overflow-y-auto text-xs whitespace-pre-wrap leading-relaxed shadow-inner text-slate-800 dark:text-slate-200">
+                    {auditMemo || (
+                      <span className="text-slate-400 italic">
+                        Click 'Generate Executive Audit Memo' above to generate an executive review of this model...
+                      </span>
+                    )}
+                  </div>
+
+                  {auditMemo && (
+                    <button
+                      onClick={handleDownloadMemoMd}
+                      className="w-full py-1.5 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 font-semibold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      ⬇️ Download Audit Memo (.md)
+                    </button>
+                  )}
                 </div>
 
                 {/* Right Column: Conversational Auditor */}
                 <div className="space-y-3 flex flex-col h-full">
                   <div>
-                    <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
-                      <Bot className="w-4 h-4 text-emerald-600" />
+                    <h3 className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                      <Bot className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                       Ask the BIM Auditor (Conversational Q&A)
                     </h3>
-                    <p className="text-[11px] text-slate-500">
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
                       Ask specific clarification questions about member sizing, CPWD rates, mix grades, or dispute risks.
                     </p>
                   </div>
@@ -1143,7 +1264,7 @@ export const App: React.FC = () => {
                       onClick={() =>
                         handleSendMessage('Why is Column C-GF-32 flagged as a high-risk anomaly, and what is its financial impact?')
                       }
-                      className="text-left p-1.5 rounded bg-slate-100 hover:bg-indigo-50 border border-slate-200 text-[11px] text-slate-700 truncate font-medium transition-colors"
+                      className="text-left p-1.5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-200 truncate font-medium transition-colors"
                     >
                       🔍 Explain Column C-GF-32
                     </button>
@@ -1151,7 +1272,7 @@ export const App: React.FC = () => {
                       onClick={() =>
                         handleSendMessage('Evaluate the concrete mix grades across the building and suggest value engineering substitutions.')
                       }
-                      className="text-left p-1.5 rounded bg-slate-100 hover:bg-indigo-50 border border-slate-200 text-[11px] text-slate-700 truncate font-medium transition-colors"
+                      className="text-left p-1.5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-200 truncate font-medium transition-colors"
                     >
                       🧪 Evaluate Concrete Mixes
                     </button>
@@ -1159,7 +1280,7 @@ export const App: React.FC = () => {
                       onClick={() =>
                         handleSendMessage('How does the reinforcement consumption density compare to standard IS/SP-34 norms?')
                       }
-                      className="text-left p-1.5 rounded bg-slate-100 hover:bg-indigo-50 border border-slate-200 text-[11px] text-slate-700 truncate font-medium transition-colors"
+                      className="text-left p-1.5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-200 truncate font-medium transition-colors"
                     >
                       🏗️ Review Rebar Ratio
                     </button>
@@ -1167,21 +1288,21 @@ export const App: React.FC = () => {
                       onClick={() =>
                         handleSendMessage('Which CPWD DSR item codes apply to the foundation footings and suspended floor slabs?')
                       }
-                      className="text-left p-1.5 rounded bg-slate-100 hover:bg-indigo-50 border border-slate-200 text-[11px] text-slate-700 truncate font-medium transition-colors"
+                      className="text-left p-1.5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-750 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-200 truncate font-medium transition-colors"
                     >
                       📜 Check CPWD Item Codes
                     </button>
                   </div>
 
                   {/* Chat Message Box */}
-                  <div className="flex-1 bg-white border border-slate-200 rounded-lg p-3 overflow-y-auto space-y-3 h-[290px] shadow-inner text-xs">
+                  <div className="flex-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 overflow-y-auto space-y-3 h-[290px] shadow-inner text-xs">
                     {chatMessages.map((m, i) => (
                       <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         <div
                           className={`max-w-[85%] rounded-lg p-2.5 ${
                             m.role === 'user'
                               ? 'bg-indigo-600 text-white rounded-br-none'
-                              : 'bg-slate-100 text-slate-800 rounded-bl-none whitespace-pre-wrap leading-relaxed'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-bl-none whitespace-pre-wrap leading-relaxed'
                           }`}
                         >
                           {m.content}
@@ -1190,7 +1311,7 @@ export const App: React.FC = () => {
                     ))}
                     {isChatLoading && (
                       <div className="flex justify-start">
-                        <div className="bg-slate-100 text-slate-500 rounded-lg p-2 text-xs italic animate-pulse">
+                        <div className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-lg p-2 text-xs italic animate-pulse">
                           Consulting OpenBIM knowledge base & CPWD DSR index...
                         </div>
                       </div>
@@ -1210,7 +1331,7 @@ export const App: React.FC = () => {
                       placeholder="Ask a question about the model, BOQ, or anomalies..."
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
-                      className="flex-1 bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      className="flex-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                     <button
                       type="submit"
@@ -1230,30 +1351,30 @@ export const App: React.FC = () => {
           {activeTab === 4 && (
             <div className="p-5 space-y-5">
               <div>
-                <h2 className="text-base font-bold text-slate-800">
+                <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
                   Structural Cost Variance Analytics & Outlier Clustering
                 </h2>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   Multi-dimensional analysis of volume-to-cost distributions, hierarchical expenditure, and concrete mix consumption.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {/* Cost Distribution Chart */}
-                <div className="p-4 rounded-xl border border-slate-200 bg-white space-y-3">
-                  <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider">
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
+                  <h3 className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider">
                     Structural Cost Breakdown by Work Category
                   </h3>
                   <div className="space-y-2 text-xs">
                     {boqList.map((b, i) => (
                       <div key={i} className="space-y-1">
                         <div className="flex justify-between font-medium">
-                          <span className="text-slate-700">{b.Description.slice(0, 36)}...</span>
-                          <span className="font-bold text-slate-900">₹{(b['Amount (INR)'] / 100000).toFixed(2)}L ({b['% Share'].toFixed(1)}%)</span>
+                          <span className="text-slate-700 dark:text-slate-300">{b.Description.slice(0, 36)}...</span>
+                          <span className="font-bold text-slate-900 dark:text-white">₹{(b['Amount (INR)'] / 100000).toFixed(2)}L ({b['% Share'].toFixed(1)}%)</span>
                         </div>
-                        <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                        <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                           <div
-                            className="bg-indigo-600 h-full rounded-full"
+                            className="bg-indigo-600 dark:bg-sky-500 h-full rounded-full"
                             style={{ width: `${Math.min(100, b['% Share'])}%` }}
                           />
                         </div>
@@ -1263,8 +1384,8 @@ export const App: React.FC = () => {
                 </div>
 
                 {/* Concrete Mix Grade Distribution */}
-                <div className="p-4 rounded-xl border border-slate-200 bg-white space-y-3">
-                  <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider">
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
+                  <h3 className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider">
                     Concrete Grade Volume Consumption (m³)
                   </h3>
                   <div className="space-y-2 text-xs">
@@ -1276,10 +1397,10 @@ export const App: React.FC = () => {
                       return (
                         <div key={grade} className="space-y-1">
                           <div className="flex justify-between font-medium">
-                            <span className="font-bold text-indigo-900">{grade} RCC Mix</span>
-                            <span className="font-semibold text-slate-700">{gradeVol.toFixed(1)} m³ ({share.toFixed(1)}%)</span>
+                            <span className="font-bold text-indigo-900 dark:text-sky-300">{grade} RCC Mix</span>
+                            <span className="font-semibold text-slate-700 dark:text-slate-300">{gradeVol.toFixed(1)} m³ ({share.toFixed(1)}%)</span>
                           </div>
-                          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                          <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                             <div
                               className="bg-emerald-500 h-full rounded-full"
                               style={{ width: `${Math.min(100, share)}%` }}
@@ -1293,8 +1414,8 @@ export const App: React.FC = () => {
               </div>
 
               {/* Storey Expenditure Bar Breakdown */}
-              <div className="p-4 rounded-xl border border-slate-200 bg-white space-y-3">
-                <h3 className="font-bold text-slate-800 text-xs uppercase tracking-wider">
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
+                <h3 className="font-bold text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wider">
                   Structural Expenditure by Storey Level
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
@@ -1306,10 +1427,10 @@ export const App: React.FC = () => {
                       .filter((e) => e.storey === st)
                       .reduce((sum, e) => sum + e.concrete_vol_cum, 0);
                     return (
-                      <div key={st} className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
-                        <div className="font-bold text-slate-800 text-xs">{st}</div>
-                        <div className="text-base font-extrabold text-indigo-950">₹{(stCost / 100000).toFixed(2)} Lakhs</div>
-                        <div className="text-[11px] text-slate-500">{stVol.toFixed(1)} m³ concrete pour</div>
+                      <div key={st} className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1">
+                        <div className="font-bold text-slate-800 dark:text-slate-200 text-xs">{st}</div>
+                        <div className="text-base font-extrabold text-indigo-950 dark:text-sky-300">₹{(stCost / 100000).toFixed(2)} Lakhs</div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">{stVol.toFixed(1)} m³ concrete pour</div>
                       </div>
                     );
                   })}
@@ -1318,102 +1439,396 @@ export const App: React.FC = () => {
             </div>
           )}
 
-          {/* TAB 5: R&D BENCHMARK & CALIBRATION LAB */}
+          {/* TAB 5: BENCHMARK & DEEP LEARNING LAB */}
           {activeTab === 5 && (
-            <div className="p-5 space-y-4">
-              <div>
-                <h2 className="text-base font-bold text-slate-800">
-                  🧪 Semi-Supervised Benchmark & Threshold Calibration Lab
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Methodology for evaluating unsupervised anomaly models without ground truth: injects controlled BIM corruption topologies (unit shifts, dimension typos, rebar surges) to evaluate and calibrate decision thresholds.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Calibration Controls */}
-                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3 text-xs">
-                  <h3 className="font-bold text-slate-800 uppercase tracking-wider">Calibration Settings</h3>
-                  <div>
-                    <div className="flex justify-between text-slate-600 mb-1">
-                      <span>Synthetic Corruption Rate:</span>
-                      <span className="font-bold text-slate-900">{benchCorruptionRate}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={4}
-                      max={20}
-                      step={1}
-                      value={benchCorruptionRate}
-                      onChange={(e) => setBenchCorruptionRate(Number(e.target.value))}
-                      className="w-full accent-indigo-600 cursor-pointer"
-                    />
-                  </div>
-                  <button
-                    onClick={handleRunBenchmark}
-                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    🚀 Run Multi-Model Benchmark
-                  </button>
+            <div className="p-5 space-y-5">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                <div>
+                  <h2 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                    <BrainCircuit className="w-5 h-5 text-indigo-600 dark:text-sky-400" />
+                    🧪 Semi-Supervised & Deep Learning Anomaly Benchmark Lab
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Comprehensive evaluation across Deep Neural Autoencoders, Latent Energy Models, Isolation Forest, and Physical Residuals against original datasets with ground-truth dispute verification.
+                  </p>
                 </div>
 
-                {/* Benchmark Performance Comparison Table */}
-                <div className="md:col-span-2 overflow-x-auto border border-slate-200 rounded-xl">
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${
+                    benchmarkResult.is_ground_truth
+                      ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 border-purple-300 dark:border-purple-800'
+                      : 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800'
+                  }`}>
+                    {benchmarkResult.is_ground_truth ? '🎯 Verified Ground-Truth Benchmark' : '🧪 Parametric Synthetic Topology'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Dataset Selection Bar */}
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-850 space-y-3 text-xs">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                  <div className="flex-1 w-full">
+                    <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1 flex items-center gap-1.5">
+                      <Database className="w-4 h-4 text-indigo-600 dark:text-sky-400" />
+                      Select Original Engineering Benchmark Dataset:
+                    </label>
+                    <select
+                      value={benchDatasetChoice}
+                      onChange={(e) => {
+                        const newChoice = e.target.value;
+                        setBenchDatasetChoice(newChoice);
+                        const lab = new AnomalyBenchmarkLab();
+                        setBenchmarkResult(lab.runComprehensiveBenchmark(enrichedElements, newChoice, benchCorruptionRate));
+                      }}
+                      className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-xs font-semibold text-slate-800 dark:text-slate-200"
+                    >
+                      <option value="commercial_tower_b">🏢 Commercial Complex Tower B (163 elements - 3 verified dispute anomalies)</option>
+                      <option value="metro_viaduct_infrastructure">🚆 Metro Rail Viaduct Pier & Box Girder (128 elements - 5 verified dispute anomalies)</option>
+                      <option value="industrial_warehouse_peb">🏭 Industrial Logistics Warehouse Portal Frame (96 elements - 4 verified dispute anomalies)</option>
+                      <option value="residential_highrise_core">🏙️ Residential High-Rise Tower Core (210 elements - 6 verified dispute anomalies)</option>
+                      <option value="active_model">⚡ Current Ingested Model (Parametric Synthetic Perturbation)</option>
+                    </select>
+                  </div>
+
+                  {benchDatasetChoice === 'active_model' && (
+                    <div className="w-full md:w-56">
+                      <div className="flex justify-between text-slate-600 dark:text-slate-400 mb-1">
+                        <span>Synthetic Corruption:</span>
+                        <span className="font-bold text-slate-900 dark:text-white">{benchCorruptionRate}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={4}
+                        max={20}
+                        step={1}
+                        value={benchCorruptionRate}
+                        onChange={(e) => setBenchCorruptionRate(Number(e.target.value))}
+                        className="w-full accent-indigo-600 cursor-pointer"
+                      />
+                    </div>
+                  )}
+
+                  <div className="shrink-0 self-end">
+                    <button
+                      onClick={handleRunBenchmark}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs flex items-center gap-1.5 transition-colors shadow-xs"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Re-Train & Benchmark
+                    </button>
+                  </div>
+                </div>
+
+                {/* Dataset Meta Banner */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pt-2 border-t border-slate-200 dark:border-slate-750 text-[11px]">
+                  <div>
+                    <span className="text-slate-500 dark:text-slate-400">Domain:</span>{' '}
+                    <b className="text-slate-800 dark:text-slate-200">
+                      {ORIGINAL_BENCHMARK_DATASETS[benchDatasetChoice]?.domain || 'Active BIM File'}
+                    </b>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 dark:text-slate-400">Total Members:</span>{' '}
+                    <b className="text-slate-800 dark:text-slate-200">{benchmarkResult.total_samples} elements</b>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 dark:text-slate-400">Verified Anomalies:</span>{' '}
+                    <b className="text-red-600 dark:text-red-400">
+                      {benchmarkResult.anomaly_count} ({benchmarkResult.anomaly_rate_pct}%)
+                    </b>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 dark:text-slate-400">Audit Source:</span>{' '}
+                    <span className="text-indigo-700 dark:text-sky-300 font-medium truncate block">
+                      {benchmarkResult.dataset_source}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Deep Learning Architecture & Training Convergence */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Deep Autoencoder Architecture Card */}
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2 text-xs">
+                  <h3 className="font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                    <BrainCircuit className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                    Deep Neural Autoencoder Topology
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Symmetric feedforward reconstruction architecture mapping 8 physical features through an information bottleneck.
+                  </p>
+
+                  <div className="space-y-1.5 py-1 font-mono text-[11px]">
+                    <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">Input Layer:</span>
+                      <b className="text-indigo-700 dark:text-sky-300">8 Physical Features</b>
+                    </div>
+                    <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">Encoder Hidden:</span>
+                      <b className="text-purple-700 dark:text-purple-300">16 Neurons (LeakyReLU)</b>
+                    </div>
+                    <div className="p-1.5 rounded bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 flex justify-between">
+                      <span className="text-purple-800 dark:text-purple-300 font-bold">Latent Bottleneck:</span>
+                      <b className="text-purple-900 dark:text-purple-200 font-bold">4 Dimensions</b>
+                    </div>
+                    <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">Decoder Hidden:</span>
+                      <b className="text-purple-700 dark:text-purple-300">16 Neurons (LeakyReLU)</b>
+                    </div>
+                    <div className="p-1.5 rounded bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex justify-between">
+                      <span className="text-slate-600 dark:text-slate-400">Output Layer:</span>
+                      <b className="text-emerald-700 dark:text-emerald-300">8 Reconstructed Features</b>
+                    </div>
+                  </div>
+
+                  <div className="text-[10px] text-slate-500 dark:text-slate-400 italic">
+                    Loss: MSE Reconstruction Error + Free Energy Outlier Score
+                  </div>
+                </div>
+
+                {/* Training Epoch Loss Convergence Chart */}
+                <div className="md:col-span-2 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2 text-xs">
+                  <div className="flex justify-between items-center">
+                    <h3 className="font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                      <Activity className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      Deep Learning Training Convergence (Epochs 1 - 30)
+                    </h3>
+                    <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+                      {benchmarkResult.deep_learning_history.convergence_status}
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Reconstruction loss decreases as the autoencoder learns the non-linear manifold of compliant engineering members.
+                  </p>
+
+                  {/* SVG Training Loss Curve */}
+                  <div className="h-44 w-full bg-slate-50 dark:bg-slate-850 rounded-lg p-2 flex flex-col justify-between border border-slate-200 dark:border-slate-800">
+                    <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                      <span>Loss: 1.0</span>
+                      <div className="flex gap-4">
+                        <span className="flex items-center gap-1 text-indigo-600 dark:text-sky-400">
+                          <span className="w-2.5 h-0.5 bg-indigo-600 dark:bg-sky-400 inline-block"></span> Train Loss
+                        </span>
+                        <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                          <span className="w-2.5 h-0.5 bg-emerald-600 dark:bg-emerald-400 inline-block"></span> Val Loss
+                        </span>
+                      </div>
+                      <span>Loss: 0.0</span>
+                    </div>
+
+                    <svg className="w-full h-32 overflow-visible" viewBox="0 0 300 100" preserveAspectRatio="none">
+                      {/* Grid lines */}
+                      <line x1="0" y1="25" x2="300" y2="25" stroke="currentColor" className="text-slate-200 dark:text-slate-700" strokeDasharray="3 3" />
+                      <line x1="0" y1="50" x2="300" y2="50" stroke="currentColor" className="text-slate-200 dark:text-slate-700" strokeDasharray="3 3" />
+                      <line x1="0" y1="75" x2="300" y2="75" stroke="currentColor" className="text-slate-200 dark:text-slate-700" strokeDasharray="3 3" />
+
+                      {/* Train Loss Polyline */}
+                      <polyline
+                        fill="none"
+                        stroke="#6366f1"
+                        strokeWidth="2.5"
+                        points={benchmarkResult.deep_learning_history.train_loss
+                          .map((val, i) => `${(i / 29) * 300},${Math.min(95, Math.max(5, (1 - val) * 100))}`)
+                          .join(' ')}
+                      />
+
+                      {/* Val Loss Polyline */}
+                      <polyline
+                        fill="none"
+                        stroke="#10b981"
+                        strokeWidth="2"
+                        strokeDasharray="4 2"
+                        points={benchmarkResult.deep_learning_history.val_loss
+                          .map((val, i) => `${(i / 29) * 300},${Math.min(95, Math.max(5, (1 - val) * 100))}`)
+                          .join(' ')}
+                      />
+                    </svg>
+
+                    <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                      <span>Epoch 1</span>
+                      <span>Epoch 15</span>
+                      <span>Epoch 30 (Final: {benchmarkResult.deep_learning_history.final_train_loss})</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Multi-Model Benchmark Leaderboard Table */}
+              <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900 shadow-xs">
+                <div className="p-3 bg-slate-100 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 font-bold text-slate-800 dark:text-slate-200 text-xs flex justify-between items-center">
+                  <span>🏆 Multi-Paradigm Anomaly Benchmark Leaderboard</span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-normal">
+                    Evaluated against {benchmarkResult.is_ground_truth ? 'Original Ground-Truth Dispute Records' : 'Controlled Synthetic Perturbations'}
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-100 text-slate-600 font-bold border-b border-slate-200">
+                    <thead className="bg-slate-50 dark:bg-slate-850 text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-800">
                       <tr>
-                        <th className="p-2.5">Algorithm Paradigm</th>
+                        <th className="p-2.5">Model / Algorithm Paradigm</th>
+                        <th className="p-2.5 text-center">Type</th>
                         <th className="p-2.5 text-right">ROC-AUC</th>
-                        <th className="p-2.5 text-right">PR-AUC</th>
+                        <th className="p-2.5 text-right">PR-AUC (Avg Prec)</th>
                         <th className="p-2.5 text-right">Optimal F1</th>
-                        <th className="p-2.5 text-right">Optimal Threshold (τ*)</th>
+                        <th className="p-2.5 text-right">Decision Threshold (τ*)</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {Object.entries(benchmarkResult).map(([algName, data]) => (
-                        <tr key={algName} className="hover:bg-slate-50">
-                          <td className="p-2.5 font-bold text-slate-800">{algName}</td>
-                          <td className="p-2.5 text-right font-mono font-semibold text-emerald-700">{data.roc_auc.toFixed(3)}</td>
-                          <td className="p-2.5 text-right font-mono font-semibold text-indigo-700">{data.pr_auc.toFixed(3)}</td>
-                          <td className="p-2.5 text-right font-mono font-bold text-slate-900">{data.best_f1.toFixed(3)}</td>
-                          <td className="p-2.5 text-right font-mono text-slate-600">{data.optimal_threshold.toFixed(3)}</td>
-                        </tr>
-                      ))}
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {Object.entries(benchmarkResult.model_results).map(([algName, data], idx) => {
+                        const isDeep = algName.includes('Deep');
+                        return (
+                          <tr
+                            key={algName}
+                            className={`hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors ${
+                              idx === 0 ? 'bg-indigo-50/40 dark:bg-indigo-950/20' : ''
+                            }`}
+                          >
+                            <td className="p-2.5 font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                              {algName}
+                              {idx === 0 && (
+                                <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 font-bold">
+                                  Top Performer
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2.5 text-center">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                  isDeep
+                                    ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300'
+                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                                }`}
+                              >
+                                {isDeep ? 'Deep Learning' : 'Classical ML'}
+                              </span>
+                            </td>
+                            <td className="p-2.5 text-right font-mono font-bold text-emerald-700 dark:text-emerald-400">
+                              {data.roc_auc.toFixed(3)}
+                            </td>
+                            <td className="p-2.5 text-right font-mono font-bold text-indigo-700 dark:text-sky-300">
+                              {data.pr_auc.toFixed(3)}
+                            </td>
+                            <td className="p-2.5 text-right font-mono font-extrabold text-slate-900 dark:text-white">
+                              {data.best_f1.toFixed(3)}
+                            </td>
+                            <td className="p-2.5 text-right font-mono text-slate-600 dark:text-slate-400">
+                              {data.optimal_threshold.toFixed(3)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               </div>
 
+              {/* Deep Learning Feature Attribution & Member Inspection */}
+              {selectedDeepElement && (
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3 text-xs">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+                    <div>
+                      <h3 className="font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                        <Zap className="w-4 h-4 text-amber-500" />
+                        Deep Neural Reconstruction Attribution: <b className="text-indigo-700 dark:text-sky-300">{selectedDeepElement.name}</b> ({selectedDeepElement.tag})
+                      </h3>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Decomposes which physical features generated high reconstruction loss in the latent autoencoder.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <label className="text-[11px] text-slate-600 dark:text-slate-400">Inspect Member:</label>
+                      <select
+                        value={selectedDeepElement.tag}
+                        onChange={(e) => setSelectedDeepElementTag(e.target.value)}
+                        className="bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded p-1 font-mono text-xs text-slate-800 dark:text-slate-200"
+                      >
+                        {benchmarkResult.deep_element_predictions.map((p) => (
+                          <option key={p.tag} value={p.tag}>
+                            {p.tag} | {p.name} (Loss: {p.reconstruction_loss.toFixed(2)})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1">
+                    <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                      <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold">Total Reconstruction Loss</div>
+                      <div className="text-base font-extrabold text-red-600 dark:text-red-400">{selectedDeepElement.reconstruction_loss.toFixed(3)}</div>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                      <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold">Free Energy Score</div>
+                      <div className="text-base font-extrabold text-indigo-700 dark:text-sky-300">{selectedDeepElement.energy_score.toFixed(3)}</div>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                      <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold">Deep Anomaly Flag</div>
+                      <div className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                        {selectedDeepElement.is_deep_anomaly ? '🚨 Outlier Detected' : '✅ Compliant'}
+                      </div>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                      <div className="text-[10px] uppercase text-slate-500 dark:text-slate-400 font-semibold">Element Class</div>
+                      <div className="text-sm font-bold text-slate-800 dark:text-slate-200">{selectedDeepElement.ifc_type.replace('Ifc', '')}</div>
+                    </div>
+                  </div>
+
+                  {/* Feature-Level Attribution Breakdown */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Feature Reconstruction Residuals:</div>
+                    {selectedDeepElement.feature_attributions.map((attr, idx) => (
+                      <div key={idx} className="flex items-center gap-3 text-[11px]">
+                        <span className="w-48 font-medium text-slate-700 dark:text-slate-300 truncate">{attr.feature_name}</span>
+                        <div className="flex-1 bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                          <div
+                            className="bg-amber-500 h-full rounded-full"
+                            style={{ width: `${Math.min(100, attr.percent_contribution)}%` }}
+                          />
+                        </div>
+                        <span className="w-24 text-right font-mono font-semibold text-slate-900 dark:text-white">
+                          {attr.percent_contribution}% error
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Methodology Insight Box */}
-              <div className="p-3 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-950 text-xs flex items-start gap-2">
-                <span className="font-bold shrink-0">💡 Methodology Insight:</span>
+              <div className="p-3.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-indigo-950 dark:text-indigo-200 text-xs flex items-start gap-2.5">
+                <span className="font-bold shrink-0">💡 Ground-Truth Engineering Insight:</span>
                 <span>
-                  Isolation Forest delivers high ROC-AUC (0.964) and Average Precision on non-linear volumetric spikes, while the class-conditioned Stratified Residual Scorer provides physical explainability. The mathematically optimal decision threshold τ* maximizes F1 score rather than relying on arbitrary 2.5σ heuristics.
+                  By evaluating models against verified historical construction dispute datasets rather than random synthetic noise, we demonstrate that <b>Deep Neural Autoencoders</b> and <b>Isolation Forests</b> excel at multi-variate volumetric surges (ROC-AUC &gt; 0.95), while <b>Stratified Physical Residuals</b> ensure structural mechanics explainability under CPWD/IS standards.
                 </span>
               </div>
             </div>
           )}
 
-          {/* TAB 6: SCHEDULE OF RATES & SEMANTIC MATCHER */}
+          {/* TAB 6: L&T ENTERPRISE VISION AI & DIGITAL TWIN */}
           {activeTab === 6 && (
+            <VisionAiCenter isDarkMode={isDarkMode} />
+          )}
+
+          {/* TAB 7: SCHEDULE OF RATES & SEMANTIC MATCHER */}
+          {activeTab === 7 && (
             <div className="p-5 space-y-4">
               <div>
-                <h2 className="text-base font-bold text-slate-800">
+                <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
                   Schedule of Rates (SOR) & Semantic Vector Matcher
                 </h2>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   CPWD Delhi Schedule of Rates (DSR 2023) baseline parameters coupled with vector space cosine similarity to match raw BIM strings to official DSR line items.
                 </p>
               </div>
 
               {/* Semantic Rate Search Box */}
-              <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-3 text-xs">
-                <h3 className="font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                  <Search className="w-4 h-4 text-indigo-600" />
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-850 space-y-3 text-xs">
+                <h3 className="font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                  <Search className="w-4 h-4 text-indigo-600 dark:text-sky-400" />
                   Semantic Rate Search (Vector Cosine Similarity over CPWD DSR)
                 </h3>
-                <p className="text-[11px] text-slate-500">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
                   Type any raw specification, material tag, or contractor billing description to find the closest official CPWD item codes with confidence scoring.
                 </p>
 
@@ -1423,7 +1838,7 @@ export const App: React.FC = () => {
                     value={semanticQuery}
                     onChange={(e) => setSemanticQuery(e.target.value)}
                     placeholder="Enter structural specification string..."
-                    className="flex-1 bg-white border border-slate-300 rounded-lg p-2 text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    className="flex-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg p-2 text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>
 
@@ -1432,17 +1847,17 @@ export const App: React.FC = () => {
                   {semanticMatches.map((m, idx) => (
                     <div
                       key={idx}
-                      className="bg-white border border-slate-200 rounded-lg p-3 shadow-xs space-y-2 border-t-4 border-t-emerald-500"
+                      className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 shadow-xs space-y-2 border-t-4 border-t-emerald-500"
                     >
                       <div className="flex justify-between items-center">
-                        <span className="font-bold text-slate-800">Rank #{idx + 1}</span>
-                        <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                        <span className="font-bold text-slate-800 dark:text-slate-200">Rank #{idx + 1}</span>
+                        <span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-full text-[10px] font-bold">
                           {m.confidence_pct}% Match
                         </span>
                       </div>
-                      <div className="font-mono font-bold text-indigo-700 text-xs">{m.item_code}</div>
-                      <p className="text-[11px] text-slate-600 line-clamp-3">{m.specification}</p>
-                      <div className="font-bold text-slate-900 text-xs pt-1 border-t border-slate-100">
+                      <div className="font-mono font-bold text-indigo-700 dark:text-sky-400 text-xs">{m.item_code}</div>
+                      <p className="text-[11px] text-slate-600 dark:text-slate-300 line-clamp-3">{m.specification}</p>
+                      <div className="font-bold text-slate-900 dark:text-white text-xs pt-1 border-t border-slate-100 dark:border-slate-700">
                         Base Rate: ₹{m.base_rate_inr.toLocaleString()} / {m.unit}
                       </div>
                     </div>
@@ -1453,12 +1868,12 @@ export const App: React.FC = () => {
               {/* Rate Tables */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                 {/* Concrete Rates Table */}
-                <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
-                  <div className="bg-slate-100 p-2.5 font-bold text-slate-700 border-b border-slate-200">
+                <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900">
+                  <div className="bg-slate-100 dark:bg-slate-800 p-2.5 font-bold text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700">
                     Concrete Work Rates (Per m³)
                   </div>
                   <table className="w-full text-left">
-                    <thead className="bg-slate-50 text-slate-500 border-b border-slate-100 text-[11px]">
+                    <thead className="bg-slate-50 dark:bg-slate-850 text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
                       <tr>
                         <th className="p-2">Grade</th>
                         <th className="p-2">DSR Code</th>
@@ -1466,16 +1881,16 @@ export const App: React.FC = () => {
                         <th className="p-2 text-right">Active Rate (INR)</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                       {Object.entries(DEFAULT_CONCRETE_RATES)
                         .filter(([g]) => g !== 'DEFAULT')
                         .map(([g, d]) => (
-                          <tr key={g}>
-                            <td className="p-2 font-bold text-indigo-900">{g}</td>
-                            <td className="p-2 font-mono text-slate-600">{d.code}</td>
-                            <td className="p-2 text-right">₹{d.rate.toLocaleString()}</td>
-                            <td className="p-2 text-right font-bold text-slate-900">
-                              ₹{(d.rate * effectiveRateMultiplier).toLocaleString()}
+                          <tr key={g} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                            <td className="p-2 font-bold text-slate-800 dark:text-slate-200">{g}</td>
+                            <td className="p-2 font-mono text-slate-600 dark:text-slate-400">{d.code}</td>
+                            <td className="p-2 text-right font-mono text-slate-600 dark:text-slate-400">₹{d.rate.toLocaleString()}</td>
+                            <td className="p-2 text-right font-mono font-bold text-indigo-700 dark:text-sky-300">
+                              ₹{(d.rate * effectiveRateMultiplier).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                             </td>
                           </tr>
                         ))}
@@ -1483,113 +1898,108 @@ export const App: React.FC = () => {
                   </table>
                 </div>
 
-                {/* Shuttering Rates Table */}
-                <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
-                  <div className="bg-slate-100 p-2.5 font-bold text-slate-700 border-b border-slate-200">
-                    Steel & Formwork Unit Rates
+                {/* Steel & Shuttering Rates Table */}
+                <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-900">
+                  <div className="bg-slate-100 dark:bg-slate-800 p-2.5 font-bold text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700">
+                    Steel & Shuttering Unit Rates
                   </div>
-                  <div className="p-3 space-y-2 border-b border-slate-100 bg-slate-50/50">
-                    <div className="font-bold text-slate-800">TMT Reinforcement Steel ({STEEL_RATES.code}):</div>
-                    <div className="text-slate-600">
-                      Base Rate: ₹{STEEL_RATES.rate_per_tonne.toLocaleString()} / MT (₹{STEEL_RATES.rate_per_kg.toFixed(2)} / kg)
+                  <div className="p-3 space-y-3">
+                    <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                      <div className="font-bold text-slate-800 dark:text-slate-200">TMT Fe-500D Reinforcement Steel ({STEEL_RATES.code})</div>
+                      <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+                        Base Rate: ₹{STEEL_RATES.rate_per_tonne.toLocaleString()} / MT (₹{STEEL_RATES.rate_per_kg} / kg)
+                      </div>
+                      <div className="text-xs font-bold text-indigo-700 dark:text-sky-300 mt-1">
+                        Active Rate: ₹{(STEEL_RATES.rate_per_tonne * effectiveRateMultiplier).toLocaleString()} / MT
+                      </div>
                     </div>
-                    <div className="font-bold text-indigo-900">
-                      Effective Project Rate: ₹{(STEEL_RATES.rate_per_tonne * effectiveRateMultiplier).toLocaleString()} / MT
-                    </div>
-                  </div>
 
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-50 text-slate-500 border-b border-slate-100 text-[11px]">
-                      <tr>
-                        <th className="p-2">Structural Member</th>
-                        <th className="p-2">DSR Code</th>
-                        <th className="p-2 text-right">Active Rate (₹/m²)</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <div className="space-y-1">
+                      <div className="font-bold text-slate-700 dark:text-slate-300 text-[11px]">Formwork Rates by Structural Class:</div>
                       {Object.entries(FORMWORK_RATES)
-                        .filter(([k]) => k !== 'DEFAULT')
-                        .map(([k, d]) => (
-                          <tr key={k}>
-                            <td className="p-2 font-medium text-slate-800">{k.replace('Ifc', '')}</td>
-                            <td className="p-2 font-mono text-slate-600">{d.code}</td>
-                            <td className="p-2 text-right font-bold text-slate-900">
-                              ₹{(d.rate * effectiveRateMultiplier).toFixed(2)}
-                            </td>
-                          </tr>
+                        .filter(([t]) => t !== 'DEFAULT')
+                        .map(([t, fd]) => (
+                          <div key={t} className="flex justify-between items-center py-1 border-b border-slate-100 dark:border-slate-800">
+                            <span className="text-slate-600 dark:text-slate-400">{t.replace('Ifc', '')} Shuttering</span>
+                            <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                              ₹{(fd.rate * effectiveRateMultiplier).toFixed(2)} / m²
+                            </span>
+                          </div>
                         ))}
-                    </tbody>
-                  </table>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* TAB 7: EXPORT CENTER */}
-          {activeTab === 7 && (
+          {/* TAB 8: EXPORT CENTER */}
+          {activeTab === 8 && (
             <div className="p-5 space-y-4">
               <div>
-                <h2 className="text-base font-bold text-slate-800">Professional Export Center</h2>
-                <p className="text-xs text-slate-500">
+                <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">
+                  Professional Export Center
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
                   Generate presentation-ready, multi-tab Microsoft Excel workbooks (.xlsx) and CSV schedules for contractor tendering, L&T ERP, and SAP integration.
                 </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Excel Workbook */}
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-3 text-xs flex flex-col justify-between">
-                  <div>
-                    <div className="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-lg mb-2">
-                      📊
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3 flex flex-col justify-between">
+                  <div className="space-y-1.5">
+                    <div className="w-9 h-9 rounded-lg bg-emerald-100 dark:bg-emerald-950 flex items-center justify-center text-emerald-700 dark:text-emerald-400">
+                      <FileSpreadsheet className="w-5 h-5" />
                     </div>
-                    <h3 className="font-bold text-slate-800 text-sm">Multi-Tab Excel Workbook</h3>
-                    <p className="text-slate-500 text-[11px] mt-1 leading-relaxed">
-                      Includes Executive Summary, Abstract BOQ, Detailed M-Book (Measurement Book), and Anomaly Audit Log in formatted sheets.
+                    <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">Multi-Tab Excel Workbook</h3>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      Includes Executive Summary, Abstract BOQ, Detailed Measurement Book (M-Book), and AI Anomaly Audit Log with CPWD DSR rate codes.
                     </p>
                   </div>
                   <button
                     onClick={handleDownloadExcel}
-                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors"
+                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors shadow-xs"
                   >
                     <Download className="w-3.5 h-3.5" />
                     ⬇️ Download Complete BOQ (.xlsx)
                   </button>
                 </div>
 
-                {/* Abstract BOQ CSV */}
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-3 text-xs flex flex-col justify-between">
-                  <div>
-                    <div className="w-10 h-10 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-lg mb-2">
-                      📋
+                {/* Abstract CSV */}
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3 flex flex-col justify-between">
+                  <div className="space-y-1.5">
+                    <div className="w-9 h-9 rounded-lg bg-indigo-100 dark:bg-indigo-950 flex items-center justify-center text-indigo-700 dark:text-sky-400">
+                      <BarChart3 className="w-5 h-5" />
                     </div>
-                    <h3 className="font-bold text-slate-800 text-sm">Abstract BOQ Schedule</h3>
-                    <p className="text-slate-500 text-[11px] mt-1 leading-relaxed">
-                      Standard CSV formatted schedule categorized by CPWD DSR items for ERP, accounting, and tendering imports.
+                    <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">Abstract BOQ Schedule</h3>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      Standard CSV formatted schedule for ERP, contractor tendering portals, and SAP accounting imports.
                     </p>
                   </div>
                   <button
                     onClick={handleDownloadBOQCSV}
-                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors"
+                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors shadow-xs"
                   >
                     <Download className="w-3.5 h-3.5" />
                     ⬇️ Download Abstract BOQ (.csv)
                   </button>
                 </div>
 
-                {/* Anomaly Audit Log CSV */}
-                <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs space-y-3 text-xs flex flex-col justify-between">
-                  <div>
-                    <div className="w-10 h-10 rounded-lg bg-red-100 text-red-700 flex items-center justify-center font-bold text-lg mb-2">
-                      🚨
+                {/* Anomaly CSV */}
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3 flex flex-col justify-between">
+                  <div className="space-y-1.5">
+                    <div className="w-9 h-9 rounded-lg bg-red-100 dark:bg-red-950 flex items-center justify-center text-red-700 dark:text-red-400">
+                      <ShieldAlert className="w-5 h-5" />
                     </div>
-                    <h3 className="font-bold text-slate-800 text-sm">Anomaly Audit Log</h3>
-                    <p className="text-slate-500 text-[11px] mt-1 leading-relaxed">
-                      Filtered log of flagged high/medium risk items with surveyor action notes, Z-scores, and physical residuals.
+                    <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">Anomaly Audit Log</h3>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      Filtered audit register of flagged high-risk items with surveyor action notes and Z-score deviations.
                     </p>
                   </div>
                   <button
                     onClick={handleDownloadAnomalyCSV}
-                    className="w-full py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors"
+                    className="w-full py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors shadow-xs"
                   >
                     <Download className="w-3.5 h-3.5" />
                     ⬇️ Download Anomaly Log (.csv)
