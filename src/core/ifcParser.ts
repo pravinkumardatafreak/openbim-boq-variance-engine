@@ -26,10 +26,19 @@ function ifcDisplayName(params: string, fallback: string): string {
 }
 
 export function loadSampleModel(): { metadata: ModelMetadata; elements: RawBIMElement[] } {
-  const data = sampleTowerData as { metadata: ModelMetadata; elements: RawBIMElement[] };
+  const data = sampleTowerData as {
+    metadata: ModelMetadata;
+    elements: (RawBIMElement & { bbox_x?: number; bbox_y?: number; bbox_z?: number })[];
+  };
   return {
     metadata: data.metadata,
-    elements: data.elements,
+    // The bundled dataset stores element centroids as bbox_x/y/z; the viewer expects center_x/y/z.
+    elements: data.elements.map(({ bbox_x, bbox_y, bbox_z, ...el }) => ({
+      ...el,
+      center_x: el.center_x ?? bbox_x ?? 0,
+      center_y: el.center_y ?? bbox_y ?? 0,
+      center_z: el.center_z ?? bbox_z ?? 0,
+    })),
   };
 }
 
