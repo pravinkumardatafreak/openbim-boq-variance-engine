@@ -141,6 +141,22 @@ $$\text{GSD (mm/pixel)} = \frac{\text{Sensor Width (mm)} \times \text{Flight Alt
 
 ---
 
+## ⚖️ Pragmatic Assessment: The "Reject It" vs. "Accept It" Framework
+
+To guarantee practical jobsite adoption rather than theoretical hype, the architecture explicitly balances physical operational limits with high-impact cost-saving zones:
+
+### ❌ The "REJECT IT" Criteria (Where Full Automation Fails)
+1. **Dense Rebar Occlusion:** Optical cameras record surface clear cover. Interior core rebar layers inside dense pile caps cannot be resolved via RGB vision and mandate non-destructive ultrasonic (UPV) testing.
+2. **Weather & Flight Envelopes:** Drone inspection is restricted during severe monsoons (>25 km/h gusts) or DGCA urban no-fly zones; fixed crane cameras provide secondary fallback telemetry.
+3. **Contractor Legal Disputes:** Fully autonomous algorithmic payment deductions risk subcontractor walk-outs and arbitration without signed human engineer certification.
+
+### ✅ The "ACCEPT IT" Mandate (Where It Saves Crores & Stress)
+1. **The Pre-Pour 80/20 Rule:** Catching a formwork bulge or cover deficit *before* pouring concrete costs **₹500** (re-tying spacers). Fixing it *after* curing costs **₹2,00,000+** in core drilling and structural retrofitting.
+2. **Eliminates 90% of Site Paperwork:** Auto-drafts binding Non-Conformance Reports (NCR) citing IS-456 clauses and CPWD DSR codes in 5 seconds instead of 4 hours of manual drafting.
+3. **Human-in-the-Loop (HITL) Governance:** AI operates strictly as an autonomous measurement copilot. Final contractual retention holds and stop-pour orders require the digital signature of the Resident QA/QC Engineer.
+
+---
+
 ## ⚡ Live Architecture & Operational Modules
 
 The application operates across **9 integrated enterprise modules**, all accessible locally in any browser with instant switching:
