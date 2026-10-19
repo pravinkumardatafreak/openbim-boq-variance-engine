@@ -54,6 +54,7 @@ import { BOQExcelExporter } from './core/excelExporter';
 import { ThreeBimViewer } from './components/ThreeBimViewer';
 import { VisionAiCenter } from './components/VisionAiCenter';
 import { TimeSeriesProgressCenter } from './components/TimeSeriesProgressCenter';
+import { AgentContractHub } from './components/AgentContractHub';
 
 export const App: React.FC = () => {
   // Theme State (Light vs Dark mode with local storage persistence)
@@ -649,11 +650,22 @@ export const App: React.FC = () => {
             </div>
           </div>
 
-          <div className="mt-3.5 bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg p-2.5 text-xs text-slate-100 flex items-start gap-2">
-            <span className="text-amber-400 font-bold shrink-0">⚡ Automated Takeoff & Risk Verification:</span>
-            <span>
-              Ingests architectural and structural IFC models, extracts volumetric property sets, applies CPWD/DSR Schedule of Rates, and runs Deep Learning Neural Autoencoders + multivariate Isolation Forest anomaly detection to catch design-to-billing discrepancies in real-time.
-            </span>
+          <div className="mt-3.5 bg-white/10 backdrop-blur-sm border border-white/20 rounded-lg p-2.5 text-xs text-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+            <div className="flex items-start gap-2">
+              <span className="text-amber-400 font-bold shrink-0">⚡ Automated Takeoff & Risk Verification:</span>
+              <span>
+                Ingests architectural and structural IFC models, extracts volumetric property sets, applies CPWD/DSR Schedule of Rates, and runs Deep Learning Neural Autoencoders + multivariate Isolation Forest anomaly detection to catch design-to-billing discrepancies in real-time.
+              </span>
+            </div>
+            <button
+              onClick={() => setActiveTab(9)}
+              className="shrink-0 px-2.5 py-1 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-200 text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Open AI Agent Contract & HITL Governance Hub"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>AI Agent Contract: ONLINE</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            </button>
           </div>
         </div>
 
@@ -735,6 +747,7 @@ export const App: React.FC = () => {
               { label: '📊 Cost & 4D Time-Series', id: 4 },
               { label: '🧪 Benchmark & Deep Learning Lab', id: 5 },
               { label: '👁️ L&T Vision AI & Digital Twin', id: 6 },
+              { label: '🛡️ AI Agent Contract & HITL', id: 9 },
               { label: '💰 Schedule of Rates', id: 7 },
               { label: '📥 Export Center', id: 8 },
             ].map((t) => (
@@ -1049,6 +1062,36 @@ export const App: React.FC = () => {
                       <span><b>Design Compliant:</b> Member dimensions, net concrete volume, and reinforcement ratio fall within standard IS 456 tolerances.</span>
                     </div>
                   )}
+
+                  {/* AI Agent Contract Inspection Card */}
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 space-y-2 text-xs">
+                    <div className="flex justify-between items-center font-bold text-slate-800 dark:text-slate-200">
+                      <span className="flex items-center gap-1.5 text-indigo-600 dark:text-sky-400">
+                        <ShieldCheck className="w-4 h-4" />
+                        AI Agent Dual-Audience Contract
+                      </span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300">
+                        Clarity.js Protocol
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-600 dark:text-slate-400 space-y-1">
+                      <div>
+                        <b className="text-emerald-600 dark:text-emerald-400 font-mono">ai:readable:</b>{' '}
+                        <span>vol: {selectedElement.concrete_vol_cum.toFixed(2)}m³, cost: ₹{selectedElement.total_cost_inr.toLocaleString()}, z_score: {selectedElement.z_score_vol}, risk: {selectedElement.risk_level}</span>
+                      </div>
+                      <div>
+                        <b className="text-red-500 font-mono">ai:forbidden:</b>{' '}
+                        <span className="text-slate-400 italic">contractor_unit_margin, vendor_token, direct_ledger_override</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab(9)}
+                      className="w-full py-1 text-center font-bold text-[11px] text-indigo-600 dark:text-sky-400 hover:underline flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <span>Open in AI Agent Governance Hub</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                  </div>
 
                   {/* Quick Action Navigation Buttons */}
                   <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
@@ -2366,6 +2409,25 @@ export const App: React.FC = () => {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* TAB 9: AI AGENT CONTRACT & HITL GOVERNANCE */}
+          {activeTab === 9 && (
+            <AgentContractHub
+              modelMeta={modelMeta}
+              kpis={kpis}
+              auditSummary={auditSummary}
+              auditedElements={auditedElements}
+              onTriggerFilter={(risk) => {
+                if (risk === 'HIGH_ONLY') {
+                  setRiskFilter('HIGH_ONLY');
+                  setActiveTab(2);
+                }
+              }}
+              onRecalibrate={(newContam) => {
+                setIsoContamination(newContam);
+              }}
+            />
           )}
         </div>
       </main>

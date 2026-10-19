@@ -7,6 +7,7 @@
 [![NVIDIA TensorRT](https://img.shields.io/badge/Edge_AI-NVIDIA_TensorRT_Jetson-76B900.svg)](https://developer.nvidia.com/tensorrt)
 [![Google Gemini](https://img.shields.io/badge/GenAI-Google_Gemini-4285F4.svg)](https://ai.google.dev/)
 [![CPWD](https://img.shields.io/badge/Standards-CPWD_DSR_2023_|_IS_456-purple.svg)](https://cpwd.gov.in/)
+[![AI Governance](https://img.shields.io/badge/AI_Governance-Clarity.js_|_HITL_ISO_19650-emerald.svg)](https://clarity-js.com/)
 
 > **Enterprise Vision AI, Digital Twin & Computational BOQ Engine:**  
 > A full-stack, production-grade intelligence suite bridging **Industry Foundation Classes (OpenBIM IFC4/2x3)**, **Deep Learning Anomaly Detection**, **NVIDIA Jetson Edge Vision AI (TensorRT / ONNX)**, and **Multimodal Vision-Language Models (VLM)**. Designed to solve high-stakes construction quality assurance, drone/robotics inspection, structural quantity variance, and contractual non-conformance reporting across complex infrastructure assets.
@@ -233,6 +234,18 @@ This solution demonstrates practical, scalable execution across every requiremen
   - **Financial Retention Hold:** Automatically computes exact contractor payment withholding (e.g., ₹2,80,000 hold for structural column re-jacketing).
   - **Remediation Directives:** Specific engineering instructions (micro-concrete pressure grouting, polyurethane injection, non-destructive ultrasonic pulse velocity testing).
 
+### 6. AI-Native Agent Contract & Human-In-The-Loop (HITL) Governance (Clarity.js Protocol)
+* **Dual-Audience Architecture:**
+  - **Human Audience:** 60 FPS interactive Three.js 3D viewer, M-Book quantity takeoffs, and visual analytics.
+  - **Autonomous Agent Audience:** Programmatic contract mounted at `window.__openbim_ai__` and `window.__clarity_ai__` allowing autonomous AI agents (Claude Computer Use, Stagehand, Playwright) to audit models without brittle DOM scraping.
+* **Declarative Presentation-Layer Firewall:**
+  - `ai:readable`: Exposes token-sanitized volumetric metrics, risk levels, and CPWD rate items (**96.2% token reduction**: 320 tokens vs 8,500 raw DOM tokens).
+  - `ai:actionable`: Whitelisted tools (`filterAnomalies`, `recalibrateContamination`, `runDeepAutoencoderBenchmark`, `simulateTensorRTInference`, `generateAuditMemo`, `requestHITLSignoff`).
+  - `ai:forbidden`: Zero-tolerance security barrier blocking agents from modifying master financial ledgers (`modifyMasterLedger`) or overriding concrete pour structural sign-offs (`overrideSafetyDefects`).
+* **Cryptographic Compliance Ledger & Certified Engineer Desk:**
+  - Every agent tool call, blocked violation, and human approval receives an automated hash signature (`sig_xxxxxxxx`).
+  - Flagged critical variances route to certified structural engineers for formal review notes and signed approval/rejection.
+
 ---
 
 ## 💻 Tech Stack & Engineering Standards
@@ -241,12 +254,13 @@ This solution demonstrates practical, scalable execution across every requiremen
 |---|---|
 | **Frontend & UI** | React 19, TypeScript 5, Vite 6, Tailwind CSS v4, Lucide Icons |
 | **3D Graphics & Spatial** | Three.js (WebGL OrbitControls, PBR materials, dynamic dark/light grids) |
+| **AI Governance & HITL** | Clarity.js Dual-Audience Protocol, Zero-Trust Permission Firewall (`ai:forbidden`), ISO 19650 Ledger |
 | **Edge Vision & MLOps** | NVIDIA TensorRT, ONNX Runtime, OpenVINO, Jetson Orin Hardware Profiler |
 | **Deep Learning** | Neural Autoencoder, Latent Manifold Bottlenecks, Free Energy Outlier Models |
 | **Explainable AI** | TreeSHAP (Local Waterfall Decomposition & Global Importance Matrix) |
 | **Generative AI** | Google Gemini (`@google/genai`) for multi-turn BIM auditor copilot |
 | **BIM & Standards** | IFC4 / IFC2x3 Step Parser, CPWD Delhi Schedule of Rates (DSR 2023), IS-456, SP-34 |
-| **Export & Reporting** | ExcelJS multi-tab (.xlsx), CSV data interchange, Markdown executive memo |
+| **Export & Reporting** | ExcelJS multi-tab (.xlsx), CSV data interchange, Signed Audit Trail JSON |
 
 ---
 
@@ -291,6 +305,7 @@ npm run preview
 3. **Generate Multimodal NCR:** Click **"Generate Official Non-Conformance Report (NCR)"** to instantly synthesize an engineering memo with IS-456 compliance citations and financial retention values.
 4. **3D Spatial Takeoff:** Switch to **Tab 0 (3D Model Explorer)**, click any column or footing to see live dimensions, concrete mix, and local TreeSHAP attribution waterfall.
 5. **Download Enterprise Deliverables:** Switch to **Tab 8 (Export Center)** and download the complete 4-sheet formatted Excel workbook (.xlsx) ready for project directors, auditors, and billing authorities.
+6. **Simulate Autonomous AI Auditor & Test HITL Security:** Switch to **Tab 9 (AI Agent Contract & HITL)** (or click the hero status pill), click **"▶ Run Autonomous Auditor Agent"** to observe live multi-step agent execution, test the `ai:forbidden` presentation firewall, and sign off pending structural variances as a certified engineer.
 
 ---
 
