@@ -53,5 +53,6 @@ dist-ssr/
 
 # Large binary media and presentation decks
 *.pdf
+!docs/*.pdf
 *.mp4
 
