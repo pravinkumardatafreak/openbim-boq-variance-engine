@@ -9,8 +9,19 @@
 [![CPWD](https://img.shields.io/badge/Standards-CPWD_DSR_2023_|_IS_456-purple.svg)](https://cpwd.gov.in/)
 [![AI Governance](https://img.shields.io/badge/AI_Governance-Clarity.js_|_HITL_ISO_19650-emerald.svg)](https://clarity-js.com/)
 
-> **Enterprise Vision AI, Digital Twin & Computational BOQ Engine:**  
-> A full-stack, production-grade intelligence suite bridging **Industry Foundation Classes (OpenBIM IFC4/2x3)**, **Deep Learning Anomaly Detection**, **NVIDIA Jetson Edge Vision AI (TensorRT / ONNX)**, and **Multimodal Vision-Language Models (VLM)**. Designed to solve high-stakes construction quality assurance, drone/robotics inspection, structural quantity variance, and contractual non-conformance reporting across complex infrastructure assets.
+[![Live Demo on GitHub Pages](https://img.shields.io/badge/🚀_Live_Demo-GitHub_Pages-2ea44f?style=for-the-badge)](https://pravinkumardatafreak.github.io/openbim-boq-variance-engine/)
+[![GitHub Repository](https://img.shields.io/badge/📦_Source_Code-GitHub-181717?style=for-the-badge&logo=github)](https://github.com/pravinkumardatafreak/openbim-boq-variance-engine)
+
+> 🌐 **Live Web Application:** [https://pravinkumardatafreak.github.io/openbim-boq-variance-engine/](https://pravinkumardatafreak.github.io/openbim-boq-variance-engine/)  
+> 📦 **GitHub Source Code:** [https://github.com/pravinkumardatafreak/openbim-boq-variance-engine](https://github.com/pravinkumardatafreak/openbim-boq-variance-engine)
+
+---
+
+## 🎬 Live System Demo & Screen Recording
+
+![OpenBIM AI Agent Contract & HITL Governance Hub Demo](./docs/demo_agent_governance.png)
+
+> **Autonomous AI Agent Simulation:** Watch the autonomous auditor agent take token-sanitized snapshots, filter high-risk columns, trigger the red `ai:forbidden` presentation firewall, and hand off to certified Human-in-the-Loop review. [View Full High-Resolution Screen Recording](./docs/demo_agent_simulation.webp).
 
 ---
 
