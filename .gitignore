@@ -50,3 +50,8 @@ dist-ssr/
 *.local
 .vite/
 
+
+# Large binary media and presentation decks
+*.pdf
+*.mp4
+

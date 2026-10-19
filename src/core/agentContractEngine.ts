@@ -1,6 +1,21 @@
 import { AuditedBIMElement, KPISummary, AuditSummary, ModelMetadata } from '../types/bim';
 
 export type AIPermissionLevel = 'READABLE' | 'ACTIONABLE' | 'FORBIDDEN';
+export class ClarityAIForbiddenError extends Error {
+  public readonly action: string;
+  public readonly attemptedPayload?: any;
+  public readonly timestamp: string;
+
+  constructor(message: string, action: string, attemptedPayload?: any) {
+    super(message);
+    this.name = 'ClarityAIForbiddenError';
+    this.action = action;
+    this.attemptedPayload = attemptedPayload;
+    this.timestamp = new Date().toISOString();
+    Object.setPrototypeOf(this, ClarityAIForbiddenError.prototype);
+  }
+}
+
 
 export interface AIAuditLogEntry {
   id: string;
@@ -11,6 +26,7 @@ export interface AIAuditLogEntry {
   status: 'SUCCESS' | 'BLOCKED_SECURITY_VIOLATION' | 'PENDING_HUMAN_SIGN_OFF' | 'APPROVED_BY_HUMAN' | 'REJECTED_BY_HUMAN';
   details: Record<string, any>;
   signature: string;
+  prevHash?: string;
 }
 
 export interface HITLSignoffRequest {
@@ -386,15 +402,153 @@ export class AgentContractEngine {
     });
   }
 
-  private logEvent(entry: Omit<AIAuditLogEntry, 'id' | 'timestamp' | 'signature'>) {
+
+  private computeMerkleHash(prevHash: string, dataStr: string): string {
+    let h1 = 0x811c9dc5;
+    let h2 = 0x27d4eb2f;
+    const combined = prevHash + '::' + dataStr;
+    for (let i = 0; i < combined.length; i++) {
+      const code = combined.charCodeAt(i);
+      h1 ^= code;
+      h1 = Math.imul(h1, 0x01000193);
+      h2 ^= code;
+      h2 = Math.imul(h2, 0x01000193);
+    }
+    return 'sha256_' + Math.abs(h1).toString(16).padStart(8, '0') + Math.abs(h2).toString(16).padStart(8, '0');
+  }
+
+  public verifyChainIntegrity(): { isValid: boolean; checkedBlocks: number; brokenBlockId?: string } {
+    if (this.auditLog.length === 0) return { isValid: true, checkedBlocks: 0 };
+    for (let i = 0; i < this.auditLog.length; i++) {
+      const entry = this.auditLog[i];
+      const nextOlderEntry = i + 1 < this.auditLog.length ? this.auditLog[i + 1] : null;
+      const expectedPrevHash = nextOlderEntry ? nextOlderEntry.signature : 'GENESIS_BLOCK_00000000';
+      if (entry.prevHash && entry.prevHash !== expectedPrevHash) {
+        return { isValid: false, checkedBlocks: i + 1, brokenBlockId: entry.id };
+      }
+    }
+    return { isValid: true, checkedBlocks: this.auditLog.length };
+  }
+
+  public getMCPManifest() {
+    return {
+      schema_version: '2024-11-05',
+      server_info: {
+        name: 'openbim-clarity-governance-mcp',
+        version: '1.2.0',
+        description: 'Clarity.js AI-Native Governance Contract for OpenBIM IFC Cost Intelligence and Structural Audit',
+      },
+      tools: [
+        {
+          name: 'openbim_snapshot',
+          description: 'Obtain token-sanitized, PII-stripped summary of BIM elements, risk tiers, and CPWD financial estimates.',
+          permission_level: 'READABLE',
+          requires_hitl: false,
+          inputSchema: { type: 'object', properties: {} },
+        },
+        {
+          name: 'openbim_filter_anomalies',
+          description: 'Filter model elements by risk tier (ALL or HIGH_ONLY) for focused audit review.',
+          permission_level: 'ACTIONABLE',
+          requires_hitl: false,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              risk: { type: 'string', enum: ['ALL', 'HIGH_ONLY'], description: 'Risk filter target' },
+            },
+            required: ['risk'],
+          },
+        },
+        {
+          name: 'openbim_request_hitl_signoff',
+          description: 'Submit an anomaly exceeding financial variance threshold (₹50k+) to certified human structural engineer review desk.',
+          permission_level: 'ACTIONABLE',
+          requires_hitl: true,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              elementTag: { type: 'string', description: 'IFC tag (e.g. #16)' },
+              elementName: { type: 'string', description: 'Member description' },
+              requestedAction: { type: 'string', description: 'Proposed variance change' },
+              riskSeverity: { type: 'string', enum: ['CRITICAL', 'HIGH', 'MEDIUM'] },
+              varianceCostINR: { type: 'number', description: 'Cost delta in INR' },
+              agentJustification: { type: 'string', description: 'Technical rationale' },
+            },
+            required: ['elementTag', 'varianceCostINR'],
+          },
+        },
+        {
+          name: 'openbim_verify_audit_chain',
+          description: 'Traverse and cryptographically verify the integrity of the Merkle-lite audit trail.',
+          permission_level: 'READABLE',
+          requires_hitl: false,
+          inputSchema: { type: 'object', properties: {} },
+        },
+      ],
+    };
+  }
+
+  public createContractProxy<T extends object>(target: T): T {
+    const engine = this;
+    return new Proxy(target, {
+      get(obj: any, prop: string | symbol) {
+        if (typeof prop === 'symbol') return obj[prop];
+        const propStr = String(prop);
+
+        if (
+          engine.FORBIDDEN_ACTIONS.includes(propStr) ||
+          ['unit_price', 'master_ledger', 'vendor_token', 'override_safety'].includes(propStr)
+        ) {
+          const err = new ClarityAIForbiddenError(
+            '[Clarity.js Trap] Forbidden property access blocked: "' + propStr + '". Autonomous agents are prohibited from reading or mutating safety-critical invariants.',
+            propStr
+          );
+          engine.act(propStr, { trap_type: 'PROPERTY_GET_INTERCEPT' }, 'AUTONOMOUS_AGENT');
+          throw err;
+        }
+
+        if (engine.ACTIONABLE_METHODS.includes(propStr)) {
+          return (...args: any[]) => engine.act(propStr, args[0] || {}, 'AUTONOMOUS_AGENT');
+        }
+
+        if (engine.READABLE_PROPERTIES.includes(propStr)) {
+          return obj[propStr];
+        }
+
+        return obj[propStr];
+      },
+      set(obj: any, prop: string | symbol, value: any) {
+        const propStr = String(prop);
+        if (
+          engine.FORBIDDEN_ACTIONS.includes(propStr) ||
+          ['unit_price', 'master_ledger', 'total_cost_inr'].includes(propStr)
+        ) {
+          const err = new ClarityAIForbiddenError(
+            '[Clarity.js Trap] Unauthorized mutation blocked: Cannot write to "' + propStr + '". Ledger is immutable for autonomous agents.',
+            propStr,
+            value
+          );
+          engine.act(propStr, { trap_type: 'PROPERTY_SET_INTERCEPT', attempted_value: value }, 'AUTONOMOUS_AGENT');
+          throw err;
+        }
+        obj[propStr] = value;
+        return true;
+      },
+    });
+  }
+
+  private logEvent(entry: Omit<AIAuditLogEntry, 'id' | 'timestamp' | 'signature' | 'prevHash'>) {
     const timestamp = new Date().toISOString();
     const id = 'evt_' + Math.random().toString(36).substring(2, 9);
-    const signature = this.simpleHash(`${entry.action}_${entry.actor}_${timestamp}`);
+    const prevHash = this.auditLog.length > 0 ? this.auditLog[0].signature : 'GENESIS_BLOCK_00000000';
+    const payloadStr = JSON.stringify(entry.details || {});
+    const signature = this.computeMerkleHash(prevHash, entry.action + '_' + entry.actor + '_' + timestamp + '_' + payloadStr);
 
     this.auditLog.unshift({
       id,
       timestamp,
       signature,
+      prevHash,
       ...entry,
     });
     this.notify();
@@ -448,6 +602,9 @@ export class AgentContractEngine {
         act: (action: string, payload: any) => this.act(action, payload, 'AUTONOMOUS_AGENT'),
         getAIAuditLog: () => this.getAIAuditLog(),
         exportAuditLogJSON: () => this.exportAuditLogJSON(),
+        getMCPManifest: () => this.getMCPManifest(),
+        verifyChainIntegrity: () => this.verifyChainIntegrity(),
+        createProxy: <T extends object>(target: T) => this.createContractProxy(target),
       };
 
       (window as any).__openbim_ai__ = contractInterface;

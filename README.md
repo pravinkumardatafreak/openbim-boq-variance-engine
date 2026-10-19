@@ -22,6 +22,8 @@
 ![OpenBIM AI Agent Contract & HITL Governance Hub Demo](./docs/demo_agent_governance.png)
 
 > **Autonomous AI Agent Simulation:** Watch the autonomous auditor agent take token-sanitized snapshots, filter high-risk columns, trigger the red `ai:forbidden` presentation firewall, and hand off to certified Human-in-the-Loop review. [View Full High-Resolution Screen Recording](./docs/demo_agent_simulation.webp).
+>
+> 📱 **Executive Architecture Carousel (9 Slides):** [Browse Architectural Slide Deck](./docs/carousel_slides/slide_1.png) covering dual-audience frontend contracts, Clarity.js reactive proxy traps, ISO 19650 Merkle-lite hash chains, and Model Context Protocol (MCP) tool schemas.
 
 ---
 

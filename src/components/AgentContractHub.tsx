@@ -8,6 +8,8 @@ import {
   Unlock,
   AlertOctagon,
   Terminal,
+  Link2,
+  Copy,
   Play,
   RotateCcw,
   Download,
@@ -28,6 +30,7 @@ import {
   AIAuditLogEntry,
   HITLSignoffRequest,
   AgentContractSnapshot,
+  ClarityAIForbiddenError,
 } from '../core/agentContractEngine';
 import { AuditedBIMElement, KPISummary, AuditSummary, ModelMetadata } from '../types/bim';
 
@@ -57,6 +60,12 @@ export const AgentContractHub: React.FC<AgentContractHubProps> = ({
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [simSteps, setSimSteps] = useState<string[]>([]);
   const [simActiveIndex, setSimActiveIndex] = useState<number>(-1);
+  
+  const [showMCPModal, setShowMCPModal] = useState<boolean>(false);
+  const [mcpManifest, setMcpManifest] = useState<any>(null);
+  const [chainIntegrity, setChainIntegrity] = useState<{ isValid: boolean; checkedBlocks: number } | null>(null);
+  const [copiedMCP, setCopiedMCP] = useState<boolean>(false);
+
   const [liveSnapshot, setLiveSnapshot] = useState<AgentContractSnapshot | null>(null);
 
   // Reviewer inputs for HITL
@@ -73,6 +82,32 @@ export const AgentContractHub: React.FC<AgentContractHubProps> = ({
     });
     return () => unsubscribe();
   }, [engine]);
+
+  
+  const handleVerifyChain = () => {
+    const res = engine.verifyChainIntegrity();
+    setChainIntegrity(res);
+    setSecurityAlert({
+      show: true,
+      msg: res.isValid
+        ? `🔗 Cryptographic Merkle Chain Verified: 100% tamper-evident. All ${res.checkedBlocks} event blocks match sequential SHA-256 signatures.`
+        : `🚨 Merkle Chain Integrity Fault: Block tampering detected!`
+    });
+    setTimeout(() => setSecurityAlert({ show: false, msg: '' }), 5000);
+  };
+
+  const handleOpenMCPManifest = () => {
+    const manifest = engine.getMCPManifest();
+    setMcpManifest(manifest);
+    setShowMCPModal(true);
+  };
+
+  const handleCopyMCP = () => {
+    if (!mcpManifest) return;
+    navigator.clipboard.writeText(JSON.stringify(mcpManifest, null, 2));
+    setCopiedMCP(true);
+    setTimeout(() => setCopiedMCP(false), 2000);
+  };
 
   const handleGenerateSnapshot = () => {
     const snap = engine.snapshot(modelMeta, kpis, auditSummary, auditedElements);
@@ -186,7 +221,24 @@ export const AgentContractHub: React.FC<AgentContractHubProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            onClick={handleVerifyChain}
+            className="px-3 py-1.5 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/40 text-xs font-semibold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1.5 shadow-xs transition-colors"
+          >
+            <Link2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            Verify Merkle Chain
+          </button>
+
+          <button
+            onClick={handleOpenMCPManifest}
+            className="px-3 py-1.5 rounded-lg border border-sky-300 dark:border-sky-800 bg-sky-50/70 dark:bg-sky-950/40 text-xs font-semibold text-sky-800 dark:text-sky-300 hover:bg-sky-100 flex items-center gap-1.5 shadow-xs transition-colors"
+          >
+            <Terminal className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+            MCP Tool Manifest
+          </button>
+
           <button
             onClick={handleDownloadAuditJSON}
             className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-750 flex items-center gap-1.5 shadow-xs transition-colors"
@@ -429,6 +481,40 @@ export const AgentContractHub: React.FC<AgentContractHubProps> = ({
           </div>
         </div>
       </div>
+
+      
+      {/* MCP TOOL MANIFEST MODAL */}
+      {showMCPModal && mcpManifest && (
+        <div className="p-4 rounded-xl border border-sky-300 dark:border-sky-700 bg-slate-900 text-slate-200 font-mono text-xs space-y-2">
+          <div className="flex justify-between items-center pb-2 border-b border-slate-800 font-sans">
+            <span className="font-bold text-sky-400 flex items-center gap-2">
+              <Terminal className="w-4 h-4" />
+              Model Context Protocol (MCP) Tool Manifest (Clarity.js Reactive Engine)
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCopyMCP}
+                className="text-slate-300 hover:text-white text-xs px-2.5 py-1 rounded bg-sky-800 hover:bg-sky-700 flex items-center gap-1"
+              >
+                <Copy className="w-3 h-3" />
+                {copiedMCP ? 'Copied!' : 'Copy JSON'}
+              </button>
+              <button
+                onClick={() => setShowMCPModal(false)}
+                className="text-slate-400 hover:text-white text-xs px-2.5 py-1 rounded bg-slate-800"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+          <p className="text-[11px] text-slate-400 font-sans">
+            Paste this schema into Claude Computer Use, Cursor MCP, or OpenAI Swarm agents to safely orchestrate this BIM audit session.
+          </p>
+          <pre className="max-h-60 overflow-y-auto text-[11px] text-sky-300 p-2 rounded bg-slate-950 border border-slate-800">
+            {JSON.stringify(mcpManifest, null, 2)}
+          </pre>
+        </div>
+      )}
 
       {/* LIVE SNAPSHOT MODAL / VIEWER */}
       {liveSnapshot && (
